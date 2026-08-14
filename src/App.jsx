@@ -69,7 +69,7 @@ const ROOMS_KEY = "order-residence-rooms";
 const INVOICE_REQUESTS_KEY = "order-residence-invoice-requests";
 const LANG_KEY = "order-residence-lang";
 const ADMIN_PIN = "2569";
-const DEFAULT_SETTINGS = { price: 590, taxRate: 7, roomImage: "", lockboxCode: "", minibarItems: null, invoiceInfo: null };
+const DEFAULT_SETTINGS = { price: 590, taxRate: 7, roomImage: "", lockboxCode: "", adminPin: "2569", minibarItems: null, invoiceInfo: null };
 const DEFAULT_INVOICE_INFO = { companyName: "Order Residence Co., Ltd.", taxId: "", address: "", logoImage: "" };
 const ADDON_PRICE = 100;
 const MINIBAR_CATALOG = [
@@ -510,6 +510,8 @@ const STRINGS = {
       cannotAssignExtraBed: "ห้องนี้ไม่รับเสริมฟูก — ลูกค้ารายนี้มีการเสริมฟูก",
       viewPrint: "ดู / พิมพ์",
       sharedNote: "การตั้งค่านี้ใช้ร่วมกันทุกอุปกรณ์ที่เปิดต้นแบบนี้ — ลูกค้าทุกคนจะเห็นราคาและรูปที่บันทึกไว้ล่าสุด",
+      adminPinLabel: "รหัส PIN เข้าสู่ระบบผู้ดูแล",
+      adminPinHint: "รหัส 4 หลักสำหรับเข้าหน้าแอดมิน — เปลี่ยนได้ที่นี่",
       priceLabel: "ราคาห้องต่อคืน (บาท)",
       taxLabel: "ภาษีและค่าบริการ (%)",
       roomImageLabel: "รูปภาพห้องพัก",
@@ -803,6 +805,8 @@ const STRINGS = {
       cannotAssignExtraBed: "This room can't take an extra mattress — this guest has one.",
       viewPrint: "View / print",
       sharedNote: "These settings are shared across every device that opens this prototype — all customers see the latest price and photo.",
+      adminPinLabel: "Admin login PIN",
+      adminPinHint: "4-digit PIN to enter the admin panel — changeable here",
       priceLabel: "Room rate per night (THB)",
       taxLabel: "Tax & service charge (%)",
       roomImageLabel: "Room photo",
@@ -2858,8 +2862,10 @@ function AdminFlow({ lang, setLang, settings, setSettings, onExit }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
 
+  const currentPin = (settings && settings.adminPin) ? String(settings.adminPin) : ADMIN_PIN;
+
   const tryLogin = () => {
-    if (pin === ADMIN_PIN) {
+    if (pin === currentPin) {
       setStage("dashboard");
       setError("");
     } else {
@@ -2881,7 +2887,7 @@ function AdminFlow({ lang, setLang, settings, setSettings, onExit }) {
       </div>
       <div className="flex-1 overflow-y-auto" style={{ padding: "0 20px 20px" }}>
         {stage === "login" ? (
-          <AdminLogin lang={lang} pin={pin} setPin={setPin} error={error} onSubmit={tryLogin} />
+          <AdminLogin lang={lang} pin={pin} setPin={setPin} error={error} onSubmit={tryLogin} currentPin={currentPin} />
         ) : (
           <div className="pt-4" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -2924,8 +2930,9 @@ function TabButton({ active, onClick, icon: Icon, children }) {
   );
 }
 
-function AdminLogin({ lang, pin, setPin, error, onSubmit }) {
+function AdminLogin({ lang, pin, setPin, error, onSubmit, currentPin }) {
   const t = STRINGS[lang];
+  const isDefaultPin = !currentPin || currentPin === ADMIN_PIN;
   return (
     <div className="pt-8" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 20 }}>
       <div className="flex items-center justify-center" style={{ width: 56, height: 56, borderRadius: "9999px", background: c.brass }}>
@@ -2940,7 +2947,7 @@ function AdminLogin({ lang, pin, setPin, error, onSubmit }) {
         onChange={(e) => setPin(e.target.value)}
         type="password"
         inputMode="numeric"
-        maxLength={4}
+        maxLength={6}
         placeholder="••••"
         style={{
           width: 128, textAlign: "center", letterSpacing: "0.5em", fontSize: 18,
@@ -2950,7 +2957,9 @@ function AdminLogin({ lang, pin, setPin, error, onSubmit }) {
       />
       {error && <p style={{ fontSize: 12, color: c.coral }}>{error}</p>}
       <PrimaryButton onClick={onSubmit}>{t.admin.loginBtn}</PrimaryButton>
-      <p style={{ fontSize: 11, color: c.textFaint }}>{t.admin.demoNote(ADMIN_PIN)}</p>
+      {isDefaultPin && (
+        <p style={{ fontSize: 11, color: c.textFaint }}>{t.admin.demoNote(ADMIN_PIN)}</p>
+      )}
     </div>
   );
 }
@@ -2959,6 +2968,7 @@ function AdminDashboard({ lang, settings, setSettings }) {
   const t = STRINGS[lang];
   const [form, setForm] = useState(() => ({
     ...settings,
+    adminPin: settings.adminPin || ADMIN_PIN,
     minibarItems: settings.minibarItems || MINIBAR_CATALOG.map(i => ({ ...i })),
     invoiceInfo: settings.invoiceInfo || { ...DEFAULT_INVOICE_INFO },
   }));
@@ -2974,6 +2984,7 @@ function AdminDashboard({ lang, settings, setSettings }) {
   useEffect(() => {
     setForm({
       ...settings,
+      adminPin: settings.adminPin || ADMIN_PIN,
       minibarItems: settings.minibarItems || MINIBAR_CATALOG.map(i => ({ ...i })),
       invoiceInfo: settings.invoiceInfo || { ...DEFAULT_INVOICE_INFO },
     });
@@ -3076,6 +3087,7 @@ function AdminDashboard({ lang, settings, setSettings }) {
       taxRate: Number(form.taxRate) || 0,
       roomImage: (form.roomImage || "").trim(),
       lockboxCode: (form.lockboxCode || "").trim(),
+      adminPin: (form.adminPin || ADMIN_PIN).toString().trim() || ADMIN_PIN,
       minibarItems: (form.minibarItems || [])
         .filter(i => (i.name || "").trim())
         .map(i => ({ id: i.id, name: i.name.trim(), price: Number(i.price) || 0 })),
@@ -3117,6 +3129,24 @@ function AdminDashboard({ lang, settings, setSettings }) {
           {lang === "th"
             ? "รีเซ็ตรหัสนี้ทุกวัน — รหัสจะไปแสดงในหน้ากุญแจดิจิทัลของลูกค้าตอนเช็คอินอัตโนมัติ"
             : "Reset this every day — it will automatically show on the guest's digital key screen at check-in."}
+        </p>
+      </div>
+
+      <div>
+        <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+          <Lock size={14} style={{ color: c.teal }} />
+          <SectionLabel>{t.admin.adminPinLabel}</SectionLabel>
+        </div>
+        <TextField
+          type="password"
+          inputMode="numeric"
+          maxLength={6}
+          value={form.adminPin ?? settings.adminPin ?? ADMIN_PIN}
+          onChange={(e) => setForm(f => ({ ...f, adminPin: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
+          placeholder="••••"
+        />
+        <p style={{ fontSize: 11, color: c.textFaint, marginTop: 6 }}>
+          {t.admin.adminPinHint}
         </p>
       </div>
 
