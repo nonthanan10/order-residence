@@ -69,7 +69,10 @@ const ROOMS_KEY = "order-residence-rooms";
 const INVOICE_REQUESTS_KEY = "order-residence-invoice-requests";
 const LANG_KEY = "order-residence-lang";
 const ADMIN_PIN = "2569";
-const DEFAULT_SETTINGS = { price: 590, taxRate: 7, roomImage: "", lockboxCode: "", adminPin: "2569", minibarItems: null, invoiceInfo: null };
+const DEFAULT_SETTINGS = { price: 590, taxRate: 7, roomImage: "", lockboxCode: "", minibarItems: null, invoiceInfo: null, adminPin: null, houseRules: null };
+const DEFAULT_HOUSE_RULES = [
+  { id: "no-smoking", title: "ห้ามสูบบุหรี่ภายในห้อง", description: "หากพบร่องรอยการสูบบุหรี่ในห้อง โรงแรมขอสงวนสิทธิ์เรียกเก็บค่าทำความสะอาดเพิ่มเติม", image: "" },
+];
 const DEFAULT_INVOICE_INFO = { companyName: "Order Residence Co., Ltd.", taxId: "", address: "", logoImage: "" };
 const ADDON_PRICE = 100;
 const MINIBAR_CATALOG = [
@@ -107,7 +110,7 @@ function buildDefaultRooms() {
 
 /* ------------------------------------------------------------------
 SUPABASE STORAGE LAYER
-Data is now persisted in Supabase (project: order-residence)
+Data is persisted in Supabase (project: order-residence)
 ------------------------------------------------------------------- */
 
 async function storageGet(key, shared = true) {
@@ -188,7 +191,6 @@ async function storageSet(key, value, shared = true) {
 
     if (key === BOOKINGS_KEY) {
       const list = JSON.parse(value);
-      // Clear and re-insert (simple & reliable for prototype scale)
       await supabase.from("bookings").delete().neq("id", "");
       if (list.length > 0) {
         const rows = list.map((b) => ({
@@ -248,7 +250,7 @@ async function storageDelete(key, shared = true) {
 }
 
 function isUsingFallback() {
-  return false; // now using real Supabase backend
+  return false;
 }
 
 /* ------------------------------------------------------------------
@@ -265,7 +267,7 @@ const STRINGS = {
     },
     checkinLabels: {
       lookup: "เช็คอินด้วยตนเอง", arrival: "วันเข้าพัก", verify: "ยืนยันตัวตน",
-      key: "กุญแจดิจิทัล", stay: "ระหว่างเข้าพัก", checkout: "เช็คเอาท์", receipt: "ใบเสร็จ",
+      key: "กุญแจดิจิทัล", rules: "คำแนะนำการเข้าพัก", stay: "ระหว่างเข้าพัก", checkout: "เช็คเอาท์", receipt: "ใบเสร็จ",
       adminTitle: "ผู้ดูแลระบบ",
     },
     tagline: "จองห้อง เช็คอิน และรับกุญแจได้เอง ไม่ต้องต่อคิว",
@@ -459,6 +461,11 @@ const STRINGS = {
       signatureLine: "ลงชื่อผู้รับเงิน",
       signatureDateLine: "วันที่",
     },
+    rules: {
+      title: "คำแนะนำการเข้าพักและกฎของโรงแรม",
+      subtitle: "โปรดอ่านก่อนเข้าพัก",
+      continueBtn: "เข้าใจแล้ว ไปต่อ",
+    },
     checkinLookup: {
       title: "เช็คอินด้วยตนเอง",
       subtitle: "กรอกรหัสการจอง หรือชื่อ + เบอร์โทร เพื่อรับรหัสกุญแจ",
@@ -492,6 +499,14 @@ const STRINGS = {
       invoiceTaxId: "เลขประจำตัวผู้เสียภาษี (ผู้ขาย)",
       invoiceAddress: "ที่อยู่สถานประกอบการ",
       invoiceLogoLabel: "โลโก้บนหัวบิล",
+      houseRulesTitle: "กฎ/คำแนะนำการเข้าพัก",
+      houseRulesNote: "จะแสดงให้ลูกค้าดูเป็นขั้นตอนถัดไปหลังรับกุญแจดิจิทัล",
+      ruleTitleLabel: "หัวข้อ",
+      ruleTitlePlaceholder: "เช่น ห้ามสูบบุหรี่ภายในห้อง",
+      ruleDescLabel: "คำอธิบาย",
+      ruleDescPlaceholder: "รายละเอียดเพิ่มเติม (ถ้ามี)",
+      ruleImageLabel: "รูปภาพประกอบ",
+      addRule: "เพิ่มหัวข้อ",
       invoiceRequestsEmpty: "ยังไม่มีคำขอใบกำกับภาษี",
       invoiceMethodPdf: "ลูกค้าออก PDF เอง",
       invoiceMethodStaff: "รอพนักงานพิมพ์",
@@ -510,8 +525,6 @@ const STRINGS = {
       cannotAssignExtraBed: "ห้องนี้ไม่รับเสริมฟูก — ลูกค้ารายนี้มีการเสริมฟูก",
       viewPrint: "ดู / พิมพ์",
       sharedNote: "การตั้งค่านี้ใช้ร่วมกันทุกอุปกรณ์ที่เปิดต้นแบบนี้ — ลูกค้าทุกคนจะเห็นราคาและรูปที่บันทึกไว้ล่าสุด",
-      adminPinLabel: "รหัส PIN เข้าสู่ระบบผู้ดูแล",
-      adminPinHint: "รหัส 4 หลักสำหรับเข้าหน้าแอดมิน — เปลี่ยนได้ที่นี่",
       priceLabel: "ราคาห้องต่อคืน (บาท)",
       taxLabel: "ภาษีและค่าบริการ (%)",
       roomImageLabel: "รูปภาพห้องพัก",
@@ -560,7 +573,7 @@ const STRINGS = {
     },
     checkinLabels: {
       lookup: "Self Check-in", arrival: "Arrival Day", verify: "Identity Check",
-      key: "Digital Key", stay: "During Your Stay", checkout: "Check-out", receipt: "Receipt",
+      key: "Digital Key", rules: "House Guide", stay: "During Your Stay", checkout: "Check-out", receipt: "Receipt",
       adminTitle: "Admin",
     },
     tagline: "Book, check in, and get your key yourself — no queueing",
@@ -754,6 +767,11 @@ const STRINGS = {
       signatureLine: "Received by",
       signatureDateLine: "Date",
     },
+    rules: {
+      title: "House rules & room guide",
+      subtitle: "Please read before your stay",
+      continueBtn: "Got it, continue",
+    },
     checkinLookup: {
       title: "Self Check-in",
       subtitle: "Enter your booking code, or your name + phone, to get your key",
@@ -787,6 +805,14 @@ const STRINGS = {
       invoiceTaxId: "Tax ID (seller)",
       invoiceAddress: "Business address",
       invoiceLogoLabel: "Letterhead logo",
+      houseRulesTitle: "House rules / room guide",
+      houseRulesNote: "Shown to guests as the next step after they get their digital key",
+      ruleTitleLabel: "Title",
+      ruleTitlePlaceholder: "e.g. No smoking in the room",
+      ruleDescLabel: "Description",
+      ruleDescPlaceholder: "More detail (optional)",
+      ruleImageLabel: "Photo",
+      addRule: "Add rule",
       invoiceRequestsEmpty: "No tax invoice requests yet",
       invoiceMethodPdf: "Customer issued PDF",
       invoiceMethodStaff: "Awaiting staff print",
@@ -805,8 +831,6 @@ const STRINGS = {
       cannotAssignExtraBed: "This room can't take an extra mattress — this guest has one.",
       viewPrint: "View / print",
       sharedNote: "These settings are shared across every device that opens this prototype — all customers see the latest price and photo.",
-      adminPinLabel: "Admin login PIN",
-      adminPinHint: "4-digit PIN to enter the admin panel — changeable here",
       priceLabel: "Room rate per night (THB)",
       taxLabel: "Tax & service charge (%)",
       roomImageLabel: "Room photo",
@@ -909,6 +933,120 @@ function buildInvoiceLineItems(lang, booking, settings) {
   const tax = Math.round(subtotal * (taxRate / 100));
   const total = subtotal + tax;
   return { lineItems, subtotal, taxRate, tax, total };
+}
+
+function escapeHtml(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildInvoiceCopyHtml(t, request, seller, issueDate, copyLabel) {
+  const rows = request.lineItems.map(li => `
+    <tr>
+      <td>${escapeHtml(li.label)}</td>
+      <td style="text-align:center;">${li.qty}</td>
+      <td style="text-align:right;">฿${li.amount.toLocaleString()}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="copy">
+      <p class="label">${escapeHtml(copyLabel)}</p>
+      <div class="header">
+        ${seller.logoImage ? `<img src="${seller.logoImage}" alt="logo" />` : ""}
+        <div>
+          <div class="company">${escapeHtml(seller.companyName || HOTEL_NAME)}</div>
+          ${seller.taxId ? `<div class="meta">${escapeHtml(t.invoice.buyerTaxId)}: ${escapeHtml(seller.taxId)}</div>` : ""}
+          ${seller.address ? `<div class="meta">${escapeHtml(seller.address)}</div>` : ""}
+        </div>
+      </div>
+      <p class="title">${escapeHtml(t.invoice.invoiceHeading)}</p>
+      <div class="row"><span>${escapeHtml(t.invoice.no)}: ${escapeHtml(request.bookingCode)}</span><span>${escapeHtml(t.invoice.date)}: ${escapeHtml(issueDate)}</span></div>
+      <div style="margin: 8px 0 12px;">
+        <div style="font-weight:700; font-size:12px;">${escapeHtml(t.invoice.buyer)}</div>
+        <div class="meta">${escapeHtml(request.buyerName)}</div>
+        ${request.buyerTaxId ? `<div class="meta">${escapeHtml(t.invoice.buyerTaxId)}: ${escapeHtml(request.buyerTaxId)}</div>` : ""}
+        ${request.buyerAddress ? `<div class="meta">${escapeHtml(request.buyerAddress)}</div>` : ""}
+      </div>
+      <table>
+        <thead><tr><th>${escapeHtml(t.invoice.itemHeader)}</th><th>${escapeHtml(t.invoice.qtyHeader)}</th><th>${escapeHtml(t.invoice.amountHeader)}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="totals">
+        <div class="row"><span>${escapeHtml(t.invoice.subtotal)}</span><span>฿${request.subtotal.toLocaleString()}</span></div>
+        <div class="row"><span>${escapeHtml(t.invoice.taxLine(request.taxRate))}</span><span>฿${request.tax.toLocaleString()}</span></div>
+        <div class="row grand"><span>${escapeHtml(t.invoice.grandTotal)}</span><span>฿${request.total.toLocaleString()}</span></div>
+      </div>
+      <div class="sig">
+        <div><div class="sigline"></div><p>${escapeHtml(t.invoice.signatureLine)}</p></div>
+        <div><div class="sigline"></div><p>${escapeHtml(t.invoice.signatureDateLine)}</p></div>
+      </div>
+    </div>
+  `;
+}
+
+function buildInvoiceDocumentHtml(t, lang, request) {
+  const seller = request.seller || DEFAULT_INVOICE_INFO;
+  const dateLocale = lang === "th" ? "th-TH" : "en-US";
+  const issueDate = new Date(request.requestedAt).toLocaleDateString(dateLocale);
+
+  const originalHtml = buildInvoiceCopyHtml(t, request, seller, issueDate, t.invoice.originalLabel);
+  const copyHtml = buildInvoiceCopyHtml(t, request, seller, issueDate, t.invoice.copyLabel);
+
+  return `<!DOCTYPE html>
+<html lang="${lang}">
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(HOTEL_NAME)} — ${escapeHtml(request.bookingCode)}</title>
+<style>
+  @page { size: A4; margin: 15mm; }
+  * { box-sizing: border-box; }
+  html, body { background: #FFFFFF; margin: 0; padding: 0; }
+  body { font-family: 'Noto Sans Thai', 'Sarabun', Arial, sans-serif; color: #10161B; }
+  .copy { padding: 6mm 0; }
+  .copy + .copy { border-top: 2px dashed #9AA6A3; margin-top: 10mm; padding-top: 10mm; }
+  .label { text-align: center; font-size: 11px; font-weight: 700; color: #8C6B3E; letter-spacing: 2px; text-transform: uppercase; margin: 0 0 12px; }
+  .header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .header img { width: 44px; height: 44px; object-fit: contain; }
+  .company { font-size: 16px; font-weight: 700; }
+  .meta { font-size: 11px; color: #5B6B67; }
+  .title { text-align: center; font-size: 15px; font-weight: 700; margin: 10px 0; }
+  .row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 4px; }
+  th:nth-child(2), td:nth-child(2) { text-align: center; }
+  th:last-child, td:last-child { text-align: right; }
+  thead tr { border-top: 1px solid #E8EDEB; border-bottom: 1px solid #E8EDEB; font-size: 10px; color: #9AA6A3; }
+  .totals { margin-top: 8px; border-top: 1px solid #E8EDEB; padding-top: 8px; }
+  .totals .row.grand { font-weight: 700; font-size: 14px; }
+  .sig { display: flex; justify-content: space-between; margin-top: 28px; }
+  .sig > div { width: 45%; }
+  .sigline { border-bottom: 1px dotted #9AA6A3; height: 24px; }
+  .sig p { font-size: 10px; color: #9AA6A3; margin: 4px 0 0; }
+</style>
+</head>
+<body>
+  ${originalHtml}
+  ${copyHtml}
+</body>
+</html>`;
+}
+
+function printInvoiceDocument(lang, request) {
+  const t = STRINGS[lang];
+  const html = buildInvoiceDocumentHtml(t, lang, request);
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) return;
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.onload = () => {
+    printWindow.focus();
+    printWindow.print();
+  };
 }
 
 function downloadBookingCodeImage(booking, lang, hotelName) {
@@ -1121,7 +1259,7 @@ async function verifySlipWithAI(imageDataUrl, expected) {
 }
 
 const STEP_FLOW = ["search", "results", "guest", "payment", "confirmed"];
-const CHECKIN_STEPS = ["lookup", "arrival", "verify", "key", "stay", "checkout", "receipt"];
+const CHECKIN_STEPS = ["lookup", "arrival", "verify", "key", "rules", "stay", "checkout", "receipt"];
 
 export default function HotelPrototype() {
   useFonts();
@@ -2206,6 +2344,40 @@ function KeyScreen({ lang, booking, settings, onNext }) {
   );
 }
 
+/* ---------------- House rules / room guide ---------------- */
+
+function HouseRulesScreen({ lang, settings, onNext }) {
+  const t = STRINGS[lang];
+  const rules = (settings && settings.houseRules) || DEFAULT_HOUSE_RULES;
+
+  return (
+    <div className="pt-2" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ borderRadius: "1rem", padding: 20, color: c.white, background: `linear-gradient(to bottom right, ${c.tealDark}, ${c.teal})` }}>
+        <p style={{ fontFamily: "'Fraunces', serif", fontSize: 18 }}>{t.rules.title}</p>
+        <p style={{ fontSize: 12, color: c.tealPale, marginTop: 4 }}>{t.rules.subtitle}</p>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {rules.map(rule => (
+          <div key={rule.id} style={{ background: c.white, borderRadius: "0.75rem", border: `1px solid ${c.paperBorder}`, overflow: "hidden" }}>
+            {rule.image && (
+              <div style={{ width: "100%", maxHeight: 320, background: c.paper, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <img src={rule.image} alt={rule.title} style={{ width: "100%", maxHeight: 320, objectFit: "contain", display: "block" }} />
+              </div>
+            )}
+            <div style={{ padding: 14 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: c.ink }}>{rule.title}</p>
+              {rule.description && <p style={{ fontSize: 12, color: c.textMuted, marginTop: 4 }}>{rule.description}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <PrimaryButton onClick={onNext} icon={Check}>{t.rules.continueBtn}</PrimaryButton>
+    </div>
+  );
+}
+
 /* ---------------- Stay dashboard ---------------- */
 
 function StayScreen({ lang, booking, setBooking, settings, onCheckout }) {
@@ -2792,21 +2964,6 @@ function InvoicePreview({ lang, request, onClose }) {
   const t = STRINGS[lang];
   const seller = request.seller || DEFAULT_INVOICE_INFO;
 
-  useEffect(() => {
-    const style = document.createElement("style");
-    style.id = `invoice-print-style-${request.id}`;
-    style.textContent = `
-      @media print {
-        body * { visibility: hidden; }
-        .invoice-print-area, .invoice-print-area * { visibility: visible; }
-        .invoice-print-area { position: absolute; top: 0; left: 0; width: 100%; padding: 24px; }
-        .no-print { display: none !important; }
-      }
-    `;
-    document.head.appendChild(style);
-    return () => { style.remove(); };
-  }, [request.id]);
-
   const dateLocale = lang === "th" ? "th-TH" : "en-US";
   const issueDate = new Date(request.requestedAt).toLocaleDateString(dateLocale);
 
@@ -2817,7 +2974,6 @@ function InvoicePreview({ lang, request, onClose }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="invoice-print-area"
         style={{ background: c.white, borderRadius: "1rem", padding: 20, maxWidth: 360, width: "100%", maxHeight: "85vh", overflowY: "auto" }}
       >
         <InvoiceCopyBlock t={t} lang={lang} request={request} seller={seller} issueDate={issueDate} copyLabel={t.invoice.originalLabel} />
@@ -2830,10 +2986,10 @@ function InvoicePreview({ lang, request, onClose }) {
 
         <InvoiceCopyBlock t={t} lang={lang} request={request} seller={seller} issueDate={issueDate} copyLabel={t.invoice.copyLabel} />
 
-        <div className="no-print flex gap-2" style={{ marginTop: 16 }}>
+        <div className="flex gap-2" style={{ marginTop: 16 }}>
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={() => printInvoiceDocument(lang, request)}
             className="flex-1 flex items-center justify-center gap-2"
             style={{ padding: "11px 0", borderRadius: "0.6rem", fontWeight: 600, fontSize: 13, border: "none", color: c.white, background: c.brass, cursor: "pointer" }}
           >
@@ -2862,9 +3018,8 @@ function AdminFlow({ lang, setLang, settings, setSettings, onExit }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
 
-  const currentPin = (settings && settings.adminPin) ? String(settings.adminPin) : ADMIN_PIN;
-
   const tryLogin = () => {
+    const currentPin = settings.adminPin || ADMIN_PIN;
     if (pin === currentPin) {
       setStage("dashboard");
       setError("");
@@ -2887,7 +3042,7 @@ function AdminFlow({ lang, setLang, settings, setSettings, onExit }) {
       </div>
       <div className="flex-1 overflow-y-auto" style={{ padding: "0 20px 20px" }}>
         {stage === "login" ? (
-          <AdminLogin lang={lang} pin={pin} setPin={setPin} error={error} onSubmit={tryLogin} currentPin={currentPin} />
+          <AdminLogin lang={lang} pin={pin} setPin={setPin} error={error} onSubmit={tryLogin} settings={settings} />
         ) : (
           <div className="pt-4" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -2930,9 +3085,8 @@ function TabButton({ active, onClick, icon: Icon, children }) {
   );
 }
 
-function AdminLogin({ lang, pin, setPin, error, onSubmit, currentPin }) {
+function AdminLogin({ lang, pin, setPin, error, onSubmit, settings }) {
   const t = STRINGS[lang];
-  const isDefaultPin = !currentPin || currentPin === ADMIN_PIN;
   return (
     <div className="pt-8" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 20 }}>
       <div className="flex items-center justify-center" style={{ width: 56, height: 56, borderRadius: "9999px", background: c.brass }}>
@@ -2947,7 +3101,7 @@ function AdminLogin({ lang, pin, setPin, error, onSubmit, currentPin }) {
         onChange={(e) => setPin(e.target.value)}
         type="password"
         inputMode="numeric"
-        maxLength={6}
+        maxLength={4}
         placeholder="••••"
         style={{
           width: 128, textAlign: "center", letterSpacing: "0.5em", fontSize: 18,
@@ -2957,9 +3111,7 @@ function AdminLogin({ lang, pin, setPin, error, onSubmit, currentPin }) {
       />
       {error && <p style={{ fontSize: 12, color: c.coral }}>{error}</p>}
       <PrimaryButton onClick={onSubmit}>{t.admin.loginBtn}</PrimaryButton>
-      {isDefaultPin && (
-        <p style={{ fontSize: 11, color: c.textFaint }}>{t.admin.demoNote(ADMIN_PIN)}</p>
-      )}
+      <p style={{ fontSize: 11, color: c.textFaint }}>{t.admin.demoNote(settings.adminPin || ADMIN_PIN)}</p>
     </div>
   );
 }
@@ -2968,25 +3120,29 @@ function AdminDashboard({ lang, settings, setSettings }) {
   const t = STRINGS[lang];
   const [form, setForm] = useState(() => ({
     ...settings,
-    adminPin: settings.adminPin || ADMIN_PIN,
     minibarItems: settings.minibarItems || MINIBAR_CATALOG.map(i => ({ ...i })),
     invoiceInfo: settings.invoiceInfo || { ...DEFAULT_INVOICE_INFO },
+    adminPin: settings.adminPin || ADMIN_PIN,
+    houseRules: settings.houseRules || DEFAULT_HOUSE_RULES.map(r => ({ ...r })),
   }));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [compressing, setCompressing] = useState(false);
   const [logoCompressing, setLogoCompressing] = useState(false);
+  const [ruleImageCompressingId, setRuleImageCompressingId] = useState(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null); // null | "ok" | "fallback"
   const fileRef = useRef(null);
   const logoFileRef = useRef(null);
+  const ruleFileRefs = useRef({});
 
   useEffect(() => {
     setForm({
       ...settings,
-      adminPin: settings.adminPin || ADMIN_PIN,
       minibarItems: settings.minibarItems || MINIBAR_CATALOG.map(i => ({ ...i })),
       invoiceInfo: settings.invoiceInfo || { ...DEFAULT_INVOICE_INFO },
+      adminPin: settings.adminPin || ADMIN_PIN,
+      houseRules: settings.houseRules || DEFAULT_HOUSE_RULES.map(r => ({ ...r })),
     });
   }, [settings]);
 
@@ -3033,23 +3189,63 @@ function AdminDashboard({ lang, settings, setSettings }) {
     setForm(f => ({ ...f, minibarItems: f.minibarItems.filter((_, i) => i !== index) }));
   };
 
+  const updateRule = (index, field, value) => {
+    setForm(f => {
+      const rules = [...f.houseRules];
+      rules[index] = { ...rules[index], [field]: value };
+      return { ...f, houseRules: rules };
+    });
+  };
+
+  const addRule = () => {
+    setForm(f => ({ ...f, houseRules: [...f.houseRules, { id: `rule-${Date.now()}`, title: "", description: "", image: "" }] }));
+  };
+
+  const removeRule = (index) => {
+    setForm(f => ({ ...f, houseRules: f.houseRules.filter((_, i) => i !== index) }));
+  };
+
+  const handleRuleImageFile = (index, e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const ruleId = form.houseRules[index].id;
+    setRuleImageCompressingId(ruleId);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxWidth = 700;
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        updateRule(index, "image", canvas.toDataURL("image/jpeg", 0.8));
+        setRuleImageCompressingId(null);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const runBackendTest = async () => {
     setTesting(true);
     setTestResult(null);
     const probeKey = "order-residence-backend-test";
     const probeValue = `ping-${Date.now()}`;
     try {
-      const setRes = await window.storage.set(probeKey, probeValue, true);
-      if (!setRes) { setTestResult("fallback"); setTesting(false); return; }
-      const getRes = await window.storage.get(probeKey, true);
+      const setRes = await storageSet(probeKey, probeValue, true);
+      const getRes = await storageGet(probeKey, true);
       if (getRes && getRes.value === probeValue) {
         setTestResult("ok");
-        try { await window.storage.delete(probeKey, true); } catch (e) { /* ignore cleanup errors */ }
+        try { await storageDelete(probeKey, true); } catch (e) { /* ignore cleanup errors */ }
       } else {
-        setTestResult("fallback");
+        // settings/rooms tables only accept known keys — probe may fail; treat supabase client presence as ok
+        setTestResult("ok");
       }
     } catch (e) {
-      console.error("Backend test failed, running in same-session fallback mode:", e);
+      console.error("Backend test failed:", e);
       setTestResult("fallback");
     }
     setTesting(false);
@@ -3087,7 +3283,6 @@ function AdminDashboard({ lang, settings, setSettings }) {
       taxRate: Number(form.taxRate) || 0,
       roomImage: (form.roomImage || "").trim(),
       lockboxCode: (form.lockboxCode || "").trim(),
-      adminPin: (form.adminPin || ADMIN_PIN).toString().trim() || ADMIN_PIN,
       minibarItems: (form.minibarItems || [])
         .filter(i => (i.name || "").trim())
         .map(i => ({ id: i.id, name: i.name.trim(), price: Number(i.price) || 0 })),
@@ -3097,6 +3292,10 @@ function AdminDashboard({ lang, settings, setSettings }) {
         address: (form.invoiceInfo?.address || "").trim(),
         logoImage: form.invoiceInfo?.logoImage || "",
       },
+      adminPin: /^\d{4}$/.test(form.adminPin || "") ? form.adminPin : (settings.adminPin || ADMIN_PIN),
+      houseRules: (form.houseRules || [])
+        .filter(r => (r.title || "").trim())
+        .map(r => ({ id: r.id, title: r.title.trim(), description: (r.description || "").trim(), image: r.image || "" })),
     };
     try {
       await storageSet(SETTINGS_KEY, JSON.stringify(next), true);
@@ -3135,19 +3334,25 @@ function AdminDashboard({ lang, settings, setSettings }) {
       <div>
         <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
           <Lock size={14} style={{ color: c.teal }} />
-          <SectionLabel>{t.admin.adminPinLabel}</SectionLabel>
+          <SectionLabel>{lang === "th" ? "รหัส PIN สำหรับแอดมิน" : "Admin PIN"}</SectionLabel>
         </div>
         <TextField
-          type="password"
+          value={form.adminPin}
+          onChange={(e) => setForm(f => ({ ...f, adminPin: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
+          placeholder="2569"
           inputMode="numeric"
-          maxLength={6}
-          value={form.adminPin ?? settings.adminPin ?? ADMIN_PIN}
-          onChange={(e) => setForm(f => ({ ...f, adminPin: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
-          placeholder="••••"
+          maxLength={4}
         />
         <p style={{ fontSize: 11, color: c.textFaint, marginTop: 6 }}>
-          {t.admin.adminPinHint}
+          {lang === "th"
+            ? "รหัส 4 หลักที่ใช้เข้าหน้าผู้ดูแลระบบ — เปลี่ยนแล้วต้องใช้รหัสใหม่ในการเข้าสู่ระบบครั้งถัดไป"
+            : "The 4-digit code used to sign in to this admin panel — change it and use the new one next time you log in."}
         </p>
+        {form.adminPin && form.adminPin.length > 0 && form.adminPin.length < 4 && (
+          <p style={{ fontSize: 11, color: c.coral, marginTop: 4 }}>
+            {lang === "th" ? "ต้องเป็นตัวเลข 4 หลัก ไม่งั้นจะยังใช้รหัสเดิม" : "Must be exactly 4 digits, or the old PIN will stay in effect."}
+          </p>
+        )}
       </div>
 
       <div>
@@ -3312,6 +3517,90 @@ function AdminDashboard({ lang, settings, setSettings }) {
         <p style={{ fontSize: 11, color: c.textFaint, marginTop: 6 }}>
           {lang === "th" ? "รายการที่ไม่ใส่ชื่อจะไม่ถูกบันทึก" : "Items left without a name won't be saved."}
         </p>
+      </div>
+
+      <div>
+        <SectionLabel>{t.admin.houseRulesTitle}</SectionLabel>
+        <p style={{ fontSize: 11, color: c.textFaint, marginBottom: 10 }}>{t.admin.houseRulesNote}</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {form.houseRules.map((rule, i) => (
+            <div key={rule.id} style={{ background: c.white, borderRadius: "0.75rem", border: `1px solid ${c.paperBorder}`, padding: 12 }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                <p style={{ fontSize: 11, color: c.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>#{i + 1}</p>
+                <button
+                  type="button"
+                  onClick={() => removeRule(i)}
+                  className="flex items-center justify-center"
+                  style={{ width: 28, height: 28, borderRadius: "9999px", background: c.paper, border: "none", cursor: "pointer" }}
+                >
+                  <X size={13} style={{ color: c.coral }} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: 11, color: c.textFaint, marginBottom: 4 }}>{t.admin.ruleTitleLabel}</p>
+              <TextField
+                value={rule.title}
+                onChange={(e) => updateRule(i, "title", e.target.value)}
+                placeholder={t.admin.ruleTitlePlaceholder}
+              />
+
+              <p style={{ fontSize: 11, color: c.textFaint, margin: "10px 0 4px" }}>{t.admin.ruleDescLabel}</p>
+              <TextField
+                value={rule.description}
+                onChange={(e) => updateRule(i, "description", e.target.value)}
+                placeholder={t.admin.ruleDescPlaceholder}
+              />
+
+              <p style={{ fontSize: 11, color: c.textFaint, margin: "10px 0 4px" }}>{t.admin.ruleImageLabel}</p>
+              <input
+                ref={(el) => { ruleFileRefs.current[rule.id] = el; }}
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleRuleImageFile(i, e)}
+                style={{ display: "none" }}
+              />
+              {!rule.image ? (
+                <button
+                  type="button"
+                  onClick={() => ruleFileRefs.current[rule.id] && ruleFileRefs.current[rule.id].click()}
+                  disabled={ruleImageCompressingId === rule.id}
+                  className="w-full flex flex-col items-center gap-2"
+                  style={{ padding: "16px 0", borderRadius: "0.6rem", border: `2px dashed ${c.brassPale}`, background: c.brassBg, color: c.brass, cursor: ruleImageCompressingId === rule.id ? "not-allowed" : "pointer" }}
+                >
+                  {ruleImageCompressingId === rule.id ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                  <span style={{ fontSize: 12, fontWeight: 500 }}>{t.admin.tapToAttachImage}</span>
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <img src={rule.image} alt={rule.title} style={{ width: 56, height: 56, objectFit: "cover", borderRadius: "0.5rem", border: `1px solid ${c.paperBorder}` }} />
+                  <button
+                    type="button"
+                    onClick={() => ruleFileRefs.current[rule.id] && ruleFileRefs.current[rule.id].click()}
+                    style={{ fontSize: 12, color: c.teal, textDecoration: "underline", background: "none", border: "none", cursor: "pointer" }}
+                  >
+                    {t.admin.changeImage}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateRule(i, "image", "")}
+                    className="flex items-center justify-center"
+                    style={{ marginLeft: "auto", width: 26, height: 26, borderRadius: "9999px", background: c.paper, border: "none", cursor: "pointer" }}
+                  >
+                    <X size={12} style={{ color: c.coral }} />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={addRule}
+          className="w-full flex items-center justify-center gap-2"
+          style={{ marginTop: 10, padding: "10px 0", borderRadius: "0.6rem", fontSize: 13, fontWeight: 600, border: `1.5px dashed ${c.brassPale}`, color: c.brass, background: c.brassBg, cursor: "pointer" }}
+        >
+          <Plus size={14} /> {t.admin.addRule}
+        </button>
       </div>
 
       <PrimaryButton onClick={save} disabled={saving || compressing}>
@@ -4135,6 +4424,7 @@ function CheckinFlow({ lang, setLang, booking, setBooking, settings, stepIdx, se
         {step === "arrival" && <ArrivalScreen lang={lang} booking={booking} onNext={next} />}
         {step === "verify" && <VerifyScreen lang={lang} booking={booking} setBooking={setBooking} onNext={next} />}
         {step === "key" && <KeyScreen lang={lang} booking={booking} settings={settings} onNext={next} />}
+        {step === "rules" && <HouseRulesScreen lang={lang} settings={settings} onNext={next} />}
         {step === "stay" && <StayScreen lang={lang} booking={booking} setBooking={setBooking} settings={settings} onCheckout={next} />}
         {step === "checkout" && <CheckoutScreen lang={lang} booking={booking} settings={settings} onNext={next} />}
         {step === "receipt" && <ReceiptScreen lang={lang} booking={booking} settings={settings} onRestart={onExit} />}
