@@ -4,7 +4,7 @@ import {
   ShieldCheck, KeyRound, DoorOpen, Wifi,
   Coffee, Sparkles, Receipt, Star, Bell, Clock, LogOut, QrCode,
   BedDouble, Bath, Plus, Minus, X, Loader2, Settings, Lock,
-  Upload, Paperclip, Phone, LayoutList, Wallet, Building2, Tv, MessageCircle, FileText, Printer, Scissors
+  Upload, Paperclip, Phone, LayoutList, Wallet, Building2, Tv, MessageCircle, FileText, Printer, Scissors, Gift
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
@@ -61,6 +61,7 @@ function useFonts() {
 const HOTEL_NAME = "Order Residence";
 const HOTEL_ACCOUNT_NAME = "น.ส. สุพัตรา กิจตระกูล";
 const STAFF_CONTACT_URL = "https://lin.ee/NMroa4F";
+const POINTS_URL = "https://lin.ee/7TRA293";
 const HOTEL_ROOM_COUNT = 13;
 const HOTEL_MAP_URL = "https://maps.app.goo.gl/qj3EGjNvLboEqRz39?g_st=ic";
 const SETTINGS_KEY = "order-residence-settings";
@@ -416,6 +417,7 @@ const STRINGS = {
       rateLabel: "ให้คะแนนการเข้าพักของคุณ",
       restartBtn: "เริ่มต้นดูต้นแบบใหม่อีกครั้ง",
       requestInvoiceBtn: "ขอออกใบกำกับภาษี",
+      collectPointsBtn: "สะสมแต้ม",
     },
     invoice: {
       title: "ขอใบกำกับภาษี",
@@ -488,7 +490,6 @@ const STRINGS = {
       loginTitle: "เข้าสู่ระบบผู้ดูแล",
       loginSub: "กรอกรหัส PIN เพื่อจัดการราคา รูปภาพ ภาษี และดูรายการจอง",
       loginBtn: "เข้าสู่ระบบ",
-      demoNote: (pin) => `รหัสสำหรับต้นแบบนี้คือ ${pin}`,
       wrongPin: "รหัสไม่ถูกต้อง ลองอีกครั้ง",
       tabSettings: "ตั้งค่า",
       tabBookings: "รายการจอง",
@@ -722,6 +723,7 @@ const STRINGS = {
       rateLabel: "Rate your stay",
       restartBtn: "Restart the prototype",
       requestInvoiceBtn: "Request a tax invoice",
+      collectPointsBtn: "Collect points",
     },
     invoice: {
       title: "Request tax invoice",
@@ -794,7 +796,6 @@ const STRINGS = {
       loginTitle: "Admin sign-in",
       loginSub: "Enter the PIN to manage pricing, photos, tax, and view bookings.",
       loginBtn: "Sign in",
-      demoNote: (pin) => `The demo PIN is ${pin}`,
       wrongPin: "Incorrect PIN, please try again.",
       tabSettings: "Settings",
       tabBookings: "Bookings",
@@ -2465,6 +2466,16 @@ function StayScreen({ lang, booking, setBooking, settings, onCheckout }) {
         <FileText size={16} /> {t.receipt.requestInvoiceBtn}
       </button>
 
+      <a
+        href={POINTS_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="w-full flex items-center justify-center gap-2"
+        style={{ padding: "13px 0", borderRadius: "0.75rem", fontWeight: 600, fontSize: 14, border: `2px solid ${c.teal}`, color: c.teal, background: "transparent", textDecoration: "none" }}
+      >
+        <Gift size={16} /> {t.receipt.collectPointsBtn}
+      </a>
+
       <button type="button" onClick={onCheckout} className="w-full flex items-center justify-center gap-2" style={{ padding: "14px 0", borderRadius: "0.75rem", fontWeight: 600, fontSize: 14, border: `2px solid ${c.tealDark}`, color: c.tealDark, background: "transparent", cursor: "pointer" }}>
         {t.stay.checkoutBtn} <LogOut size={16} />
       </button>
@@ -3111,7 +3122,6 @@ function AdminLogin({ lang, pin, setPin, error, onSubmit, settings }) {
       />
       {error && <p style={{ fontSize: 12, color: c.coral }}>{error}</p>}
       <PrimaryButton onClick={onSubmit}>{t.admin.loginBtn}</PrimaryButton>
-      <p style={{ fontSize: 11, color: c.textFaint }}>{t.admin.demoNote(settings.adminPin || ADMIN_PIN)}</p>
     </div>
   );
 }
@@ -3236,16 +3246,16 @@ function AdminDashboard({ lang, settings, setSettings }) {
     const probeValue = `ping-${Date.now()}`;
     try {
       const setRes = await storageSet(probeKey, probeValue, true);
+      if (!setRes) { setTestResult("fallback"); setTesting(false); return; }
       const getRes = await storageGet(probeKey, true);
       if (getRes && getRes.value === probeValue) {
         setTestResult("ok");
         try { await storageDelete(probeKey, true); } catch (e) { /* ignore cleanup errors */ }
       } else {
-        // settings/rooms tables only accept known keys — probe may fail; treat supabase client presence as ok
-        setTestResult("ok");
+        setTestResult("fallback");
       }
     } catch (e) {
-      console.error("Backend test failed:", e);
+      console.error("Backend test failed, running in same-session fallback mode:", e);
       setTestResult("fallback");
     }
     setTesting(false);
