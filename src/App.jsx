@@ -435,7 +435,7 @@ const STRINGS = {
       savedForStaff: "ส่งคำขอแล้ว พนักงานจะจัดเตรียมใบกำกับภาษีให้ในเช้าวันถัดไป",
       close: "ปิด",
       printBtn: "พิมพ์ / บันทึกเป็น PDF",
-      invoiceHeading: "ใบกำกับภาษีอย่างย่อ",
+      invoiceHeading: "ใบกำกับภาษี",
       no: "เลขที่",
       date: "วันที่ออกเอกสาร",
       seller: "ผู้ขาย",
@@ -741,7 +741,7 @@ const STRINGS = {
       savedForStaff: "Request sent — staff will prepare your tax invoice tomorrow morning.",
       close: "Close",
       printBtn: "Print / Save as PDF",
-      invoiceHeading: "Abbreviated Tax Invoice",
+      invoiceHeading: "Tax Invoice",
       no: "No.",
       date: "Issue date",
       seller: "Seller",
@@ -1050,7 +1050,7 @@ function printInvoiceDocument(lang, request) {
   };
 }
 
-function downloadBookingCodeImage(booking, lang, hotelName) {
+function generateBookingCodeDataUrl(booking, lang, hotelName) {
   const W = 640, H = 820;
   const canvas = document.createElement("canvas");
   canvas.width = W;
@@ -1123,10 +1123,13 @@ function downloadBookingCodeImage(booking, lang, hotelName) {
     : "Show this code at the kiosk or in the app to self check-in";
   ctx.fillText(note, W / 2, cardY + cardH + 50);
 
-  const dataUrl = canvas.toDataURL("image/png");
+  return canvas.toDataURL("image/png");
+}
+
+function triggerImageDownload(dataUrl, filename) {
   const link = document.createElement("a");
   link.href = dataUrl;
-  link.download = `${hotelName.replace(/\s+/g, "-").toLowerCase()}-booking-${booking.code}.png`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -2068,6 +2071,7 @@ function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
 
 function ConfirmedScreen({ lang, booking, onRestart }) {
   const t = STRINGS[lang];
+  const [imageOpen, setImageOpen] = useState(false);
   return (
     <div className="pt-4" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 20 }}>
       <div className="flex items-center justify-center" style={{ width: 64, height: 64, borderRadius: "9999px", background: c.success }}>
@@ -2088,7 +2092,7 @@ function ConfirmedScreen({ lang, booking, onRestart }) {
 
       <button
         type="button"
-        onClick={() => downloadBookingCodeImage(booking, lang, HOTEL_NAME)}
+        onClick={() => setImageOpen(true)}
         className="w-full flex items-center justify-center gap-2"
         style={{ padding: "13px 0", borderRadius: "0.75rem", fontWeight: 600, fontSize: 14, border: `2px solid ${c.brass}`, color: c.brass, background: "transparent", cursor: "pointer" }}
       >
@@ -2125,6 +2129,65 @@ function ConfirmedScreen({ lang, booking, onRestart }) {
       <PrimaryButton onClick={onRestart}>
         {lang === "th" ? "กลับสู่หน้าหลัก" : "Back to home"}
       </PrimaryButton>
+
+      {imageOpen && (
+        <BookingImageModal lang={lang} booking={booking} onClose={() => setImageOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function BookingImageModal({ lang, booking, onClose }) {
+  const t = STRINGS[lang];
+  const [dataUrl, setDataUrl] = useState(null);
+
+  useEffect(() => {
+    setDataUrl(generateBookingCodeDataUrl(booking, lang, HOTEL_NAME));
+  }, [booking, lang]);
+
+  const filename = `${HOTEL_NAME.replace(/\s+/g, "-").toLowerCase()}-booking-${booking.code}.png`;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(16,22,27,0.9)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ background: c.white, borderRadius: "1rem", padding: 16, maxWidth: 340, width: "100%", maxHeight: "88vh", overflowY: "auto" }}>
+        <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+          <p style={{ fontSize: 14, fontWeight: 600, color: c.ink }}>{t.confirmed.saveImageBtn}</p>
+          <button type="button" onClick={onClose} className="flex items-center justify-center" style={{ width: 28, height: 28, borderRadius: "9999px", background: c.paper, border: "none", cursor: "pointer" }}>
+            <X size={14} style={{ color: c.ink }} />
+          </button>
+        </div>
+
+        {dataUrl ? (
+          <img src={dataUrl} alt="Booking confirmation" style={{ width: "100%", borderRadius: "0.5rem", display: "block", border: `1px solid ${c.paperBorder}` }} />
+        ) : (
+          <div className="flex items-center justify-center" style={{ height: 200 }}>
+            <Loader2 size={24} className="animate-spin" style={{ color: c.teal }} />
+          </div>
+        )}
+
+        <div className="flex items-start gap-2" style={{ background: c.brassBg, borderRadius: "0.75rem", padding: 12, marginTop: 12 }}>
+          <ShieldCheck size={15} style={{ color: c.brass, marginTop: 2, flexShrink: 0 }} />
+          <p style={{ fontSize: 12, color: c.brass }}>
+            {lang === "th"
+              ? "แตะรูปภาพด้านบนค้างไว้ แล้วเลือก \"บันทึกรูปภาพ\" เพื่อเซฟลงเครื่อง — วิธีนี้เจอรูปง่ายกว่าปุ่มดาวน์โหลดมาก เพราะรูปจะไปอยู่ในอัลบั้มรูปภาพของเครื่องโดยตรง"
+              : "Long-press the image above and choose \"Save Image\" to save it to your device — this puts it straight into your photo library, which is much easier to find than a browser download."}
+          </p>
+        </div>
+
+        {dataUrl && (
+          <button
+            type="button"
+            onClick={() => triggerImageDownload(dataUrl, filename)}
+            className="w-full flex items-center justify-center gap-2"
+            style={{ marginTop: 10, padding: "11px 0", borderRadius: "0.6rem", fontWeight: 600, fontSize: 13, border: `1.5px solid ${c.paperBorder}`, color: c.textMuted, background: "transparent", cursor: "pointer" }}
+          >
+            {lang === "th" ? "หรือดาวน์โหลดไฟล์แทน" : "Or download the file instead"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
