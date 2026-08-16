@@ -395,7 +395,7 @@ const STRINGS = {
       minibarDone: "เสร็จสิ้น",
       minibarSummaryLabel: "สรุปที่ทานไป",
       free: "ฟรี",
-      helpNote: "แจ้งพนักงานได้ตลอด 24 ชม. หากต้องการความช่วยเหลือ — แตะที่ไอคอนโทรศัพท์ด้านล่าง",
+      helpNote: "แจ้งพนักงานได้ตลอด 24 ชม. หากต้องการความช่วยเหลือ — แตะปุ่ม \"ติดต่อเจ้าหน้าที่\" ด้านล่าง",
       checkoutBtn: "เช็คเอาท์",
     },
     checkout: {
@@ -482,6 +482,7 @@ const STRINGS = {
       searching: "กำลังค้นหา…",
       searchBtn: "ค้นหาการจอง",
       notFound: "ไม่พบการจอง กรุณาตรวจสอบข้อมูลอีกครั้ง",
+      expiredCode: "รหัสนี้หมดอายุแล้ว (เลยเวลาเช็คเอาท์) กรุณาติดต่อเจ้าหน้าที่",
       systemError: "ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง",
       backHome: "กลับสู่หน้าหลัก",
       contactStaff: "ติดต่อเจ้าหน้าที่",
@@ -701,7 +702,7 @@ const STRINGS = {
       minibarDone: "Done",
       minibarSummaryLabel: "What you had",
       free: "Free",
-      helpNote: "Staff are available 24/7 — tap the phone icon below for help.",
+      helpNote: "Staff are available 24/7 — tap the \"Contact staff\" button below for help.",
       checkoutBtn: "Check out",
     },
     checkout: {
@@ -788,6 +789,7 @@ const STRINGS = {
       searching: "Searching…",
       searchBtn: "Find my booking",
       notFound: "Booking not found — please check your details and try again.",
+      expiredCode: "This code has expired (past check-out time). Please contact staff.",
       systemError: "Something went wrong — please try again.",
       backHome: "Back to home",
       contactStaff: "Contact staff",
@@ -1930,6 +1932,8 @@ function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
       roomName: booking.room ? booking.room.name : "",
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
+      checkInISO: booking.checkInISO,
+      checkOutISO: booking.checkOutISO,
       amount: grandTotal,
       slipAttached: !!slip,
       slipImage: compressedSlip,
@@ -2519,6 +2523,16 @@ function StayScreen({ lang, booking, setBooking, settings, onCheckout }) {
         <Bell size={15} style={{ color: c.teal, marginTop: 2, flexShrink: 0 }} />
         <p style={{ fontSize: 12, color: c.textMuted }}>{t.stay.helpNote}</p>
       </div>
+
+      <a
+        href={STAFF_CONTACT_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="w-full flex items-center justify-center gap-2"
+        style={{ padding: "13px 0", borderRadius: "0.75rem", fontWeight: 600, fontSize: 14, border: `2px solid ${c.teal}`, color: c.teal, background: "transparent", textDecoration: "none" }}
+      >
+        <MessageCircle size={16} /> {t.checkinLookup.contactStaff}
+      </a>
 
       <button
         type="button"
@@ -4483,6 +4497,7 @@ function CheckinFlow({ lang, setLang, booking, setBooking, settings, stepIdx, se
   const step = CHECKIN_STEPS[stepIdx];
   const next = () => setStepIdx(i => Math.min(i + 1, CHECKIN_STEPS.length - 1));
   const back = () => setStepIdx(i => Math.max(i - 1, 0));
+  const goToStep = (name) => setStepIdx(CHECKIN_STEPS.indexOf(name));
 
   return (
     <>
@@ -4493,7 +4508,14 @@ function CheckinFlow({ lang, setLang, booking, setBooking, settings, stepIdx, se
         setLang={setLang}
       />
       <div className="flex-1 overflow-y-auto" style={{ padding: "0 20px 20px" }}>
-        {step === "lookup" && <CheckinLookupScreen lang={lang} setBooking={setBooking} onFound={next} onExit={onExit} />}
+        {step === "lookup" && (
+          <CheckinLookupScreen
+            lang={lang}
+            setBooking={setBooking}
+            onFound={(returning) => (returning ? goToStep("key") : next())}
+            onExit={onExit}
+          />
+        )}
         {step === "arrival" && <ArrivalScreen lang={lang} booking={booking} onNext={next} />}
         {step === "verify" && <VerifyScreen lang={lang} booking={booking} setBooking={setBooking} onNext={next} />}
         {step === "key" && <KeyScreen lang={lang} booking={booking} settings={settings} onNext={next} />}
@@ -4540,12 +4562,25 @@ function CheckinLookupScreen({ lang, setBooking, onFound, onExit }) {
         return;
       }
 
+      if (match.checkOutISO) {
+        const deadline = new Date(`${match.checkOutISO}T12:00:00`);
+        if (new Date() > deadline) {
+          setError(t.checkinLookup.expiredCode);
+          setLoading(false);
+          return;
+        }
+      }
+
       let roomNo = "";
+      let returning = false;
       try {
         const roomsRes = await storageGet(ROOMS_KEY, true);
         const rooms = roomsRes && roomsRes.value ? JSON.parse(roomsRes.value) : [];
         const room = rooms.find(r => r.code === match.code);
-        if (room) roomNo = room.number;
+        if (room) {
+          roomNo = room.number;
+          returning = room.status === "occupied";
+        }
       } catch (e) {
         // room board unavailable — continue without a room number
       }
@@ -4558,13 +4593,15 @@ function CheckinLookupScreen({ lang, setBooking, onFound, onExit }) {
         code: match.code,
         checkIn: match.checkIn || b.checkIn,
         checkOut: match.checkOut || b.checkOut,
+        checkInISO: match.checkInISO || b.checkInISO,
+        checkOutISO: match.checkOutISO || b.checkOutISO,
         roomNo: roomNo || b.roomNo,
-        extras: [],
-        minibar: {},
-        idVerified: false,
+        extras: returning ? b.extras : [],
+        minibar: returning ? b.minibar : {},
+        idVerified: returning ? true : false,
       }));
       setLoading(false);
-      onFound();
+      onFound(returning);
     } catch (e) {
       setError(t.checkinLookup.systemError);
       setLoading(false);
