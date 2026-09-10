@@ -7,7 +7,7 @@ import {
   Upload, Paperclip, Phone, LayoutList, Wallet, Building2, Tv, MessageCircle, FileText, Printer, Scissors, Gift
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
-import { checkAvailability, confirmBooking } from "./booking";
+import { checkAvailability, confirmBooking, cancelBooking } from "./booking";
 
 /* ------------------------------------------------------------------
 DESIGN TOKENS
@@ -3138,7 +3138,7 @@ function AdminFlow({ lang, setLang, settings, setSettings, onExit }) {
               <TabButton active={tab === "invoices"} onClick={() => setTab("invoices")} icon={FileText}>{t.admin.tabInvoices}</TabButton>
             </div>
             {tab === "settings" && <AdminDashboard lang={lang} settings={settings} setSettings={setSettings} />}
-            {tab === "bookings" && <AdminBookings lang={lang} />}
+            {tab === "bookings" && <AdminBookings lang={lang} settings={settings} />}
             {tab === "rooms" && <AdminRooms lang={lang} />}
             {tab === "invoices" && <AdminInvoices lang={lang} settings={settings} onGoToSettings={() => setTab("settings")} />}
           </div>
@@ -3727,7 +3727,52 @@ function AdminDashboard({ lang, settings, setSettings }) {
   );
 }
 
-function AdminBookings({ lang }) {
+function WalkinBookingPanel({ lang, settings, onSaved }) {
+  const [form, setForm] = useState({ name: "", phone: "", checkInISO: todayISO(), checkOutISO: addDaysISO(todayISO(), 1) });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const lock = useRef(false);
+  const pending = useRef(null);
+  const nights = calcNights(form.checkInISO, form.checkOutISO);
+  const subtotal = (settings.price ?? 590) * nights;
+  const amount = subtotal + Math.round(subtotal * (settings.taxRate ?? 7) / 100);
+  const change = (key, value) => { if (!pending.current) setForm(f => ({ ...f, [key]: value })); };
+  const save = async (event) => {
+    event.preventDefault();
+    if (lock.current) return;
+    if (!form.name.trim() || !form.phone.trim() || !form.checkInISO || form.checkOutISO <= form.checkInISO) {
+      setMessage(lang === "th" ? "กรอกชื่อ เบอร์โทร และวันออกหลังวันเข้าให้ถูกต้อง" : "Enter guest details and valid stay dates."); return;
+    }
+    lock.current = true; setSaving(true); setMessage("");
+    try {
+      if (!pending.current) {
+        const available = await checkAvailability(supabase, form.checkInISO, form.checkOutISO);
+        if (!available.available) throw { code: "P0001" };
+        const code = generateBookingCode();
+        pending.current = { ...form, name: form.name.trim(), phone: form.phone.trim(), id: `${code}-${crypto.randomUUID()}`, code, email: "", roomName: lang === "th" ? "ห้องเตียงเดี่ยว คิงไซส์" : "King Single Room", checkIn: formatDate(form.checkInISO, lang), checkOut: formatDate(form.checkOutISO, lang), amount, walkIn: true, status: "confirmed", createdAt: new Date().toISOString() };
+      }
+      const record = pending.current;
+      const { roomNo } = await confirmBooking(supabase, record, false);
+      setMessage(lang === "th" ? `เปิดจองสำเร็จ รหัส ${record.code}${roomNo ? ` ห้อง ${roomNo}` : " — รอจัดห้อง"}` : `Booking saved: ${record.code}${roomNo ? `, room ${roomNo}` : " — room assignment pending"}`);
+      pending.current = null;
+      setForm(f => ({ ...f, name: "", phone: "" }));
+      onSaved();
+    } catch (error) {
+      if (error.code === "P0001") pending.current = null;
+      setMessage(error.code === "P0001" ? (lang === "th" ? "ห้องเต็มสำหรับวันที่เลือก" : "No rooms available for these dates.") : (lang === "th" ? "บันทึกไม่สำเร็จ กดลองใหม่ด้วยข้อมูลเดิมเพื่อป้องกันการจองซ้ำ" : "Unable to confirm. Retry with the same details to avoid duplicates."));
+    } finally { lock.current = false; setSaving(false); }
+  };
+  return <form onSubmit={save} style={{ background: c.white, border: `1px solid ${c.brassPale}`, borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+    <fieldset disabled={saving || !!pending.current} style={{ display: "flex", flexDirection: "column", gap: 10, border: "none", padding: 0 }}>
+      {[['name', lang === "th" ? "ชื่อลูกค้า" : "Guest name", 'text'], ['phone', lang === "th" ? "เบอร์โทร" : "Phone", 'tel'], ['checkInISO', lang === "th" ? "วันเข้าพัก" : "Check-in", 'date'], ['checkOutISO', lang === "th" ? "วันออก" : "Check-out", 'date']].map(([key, label, type]) => <label key={key} style={{ fontSize: 12, color: c.tealDark }}>{label}<input required type={type} value={form[key]} onChange={e => change(key, e.target.value)} min={key === 'checkOutISO' ? addDaysISO(form.checkInISO, 1) : undefined} style={{ display: "block", width: "100%", minWidth: 0, padding: 9, border: `1px solid ${c.paperBorder}`, borderRadius: 6 }} /></label>)}
+    </fieldset>
+    <p style={{ fontSize: 13 }}>{lang === "th" ? "ยอดรวมตามระยะเข้าพัก (รวมภาษี)" : "Stay total including tax"}: ฿{Number.isFinite(amount) ? amount.toLocaleString() : "—"}</p>
+    <button type="submit" disabled={saving} style={{ padding: 10, border: "none", borderRadius: 8, color: c.white, background: c.tealDark, cursor: "pointer" }}>{saving ? "…" : lang === "th" ? "ยืนยันเปิดจอง" : "Confirm walk-in"}</button>
+    {message && <p role="status" style={{ fontSize: 13, color: c.teal }}>{message}</p>}
+  </form>;
+}
+
+function AdminBookings({ lang, settings }) {
   const t = STRINGS[lang];
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3736,6 +3781,24 @@ function AdminBookings({ lang }) {
   const [checkingSlipId, setCheckingSlipId] = useState(null);
   const [assigningRoom, setAssigningRoom] = useState(null); // booking object | null
   const [roomByCode, setRoomByCode] = useState({});
+
+  const [showWalkin, setShowWalkin] = useState(false);
+  const [closingId, setClosingId] = useState(null);
+  const closeLock = useRef(false);
+  const [actionMessage, setActionMessage] = useState("");
+  const closeBooking = async (record) => {
+    if (closeLock.current || !window.confirm(lang === "th" ? `ยืนยันยกเลิกการจองของ ${record.name || record.code}?` : `Cancel booking for ${record.name || record.code}?`)) return;
+    closeLock.current = true;
+    setClosingId(record.id);
+    setActionMessage("");
+    try {
+      const cleared = await cancelBooking(supabase, record.id);
+      setActionMessage(cleared ? (lang === "th" ? "ยกเลิกการจองแล้ว" : "Booking cancelled") : (lang === "th" ? "ยกเลิกการจองแล้ว แต่ยังคืนห้องไม่สำเร็จ กรุณากดคืนห้องอีกครั้ง" : "Booking cancelled, but room release needs a retry."));
+      await load();
+    } catch {
+      setActionMessage(lang === "th" ? "ยกเลิกไม่สำเร็จ กรุณารีเฟรชแล้วลองใหม่" : "Cancellation failed. Refresh and retry.");
+    } finally { closeLock.current = false; setClosingId(null); }
+  };
 
   const checkSlip = async (bookingRecord) => {
     setCheckingSlipId(bookingRecord.id);
@@ -3781,10 +3844,14 @@ function AdminBookings({ lang }) {
   const visibleBookings = selectedDate
     ? bookings.filter(b => b.checkInISO && b.checkOutISO && b.checkInISO <= selectedDate && selectedDate < b.checkOutISO)
     : bookings;
-  const totalRevenue = visibleBookings.reduce((s, b) => s + (b.amount || 0), 0);
+  const activeBookings = visibleBookings.filter(b => b.status !== "cancelled");
+  const totalRevenue = activeBookings.reduce((s, b) => s + (b.amount || 0), 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <PrimaryButton onClick={() => setShowWalkin(v => !v)} icon={Plus}>{lang === "th" ? "+ เปิดจอง Walk-in" : "+ Add walk-in booking"}</PrimaryButton>
+      {showWalkin && <WalkinBookingPanel lang={lang} settings={settings} onSaved={() => { setSelectedDate(""); load(); }} />}
+      {actionMessage && <p role="status" style={{ fontSize: 13, color: c.teal }}>{actionMessage}</p>}
       <div style={{ background: c.white, borderRadius: "0.75rem", padding: 12, border: `1px solid ${c.paperBorder}` }}>
         <label htmlFor="admin-booking-date" className="flex items-center gap-2" style={{ fontSize: 13, fontWeight: 600, color: c.tealDark, marginBottom: 8 }}>
           <Calendar size={16} /> {lang === "th" ? "เลือกวันที่ดูรายการจอง" : "View bookings by stay date"}
@@ -3800,7 +3867,7 @@ function AdminBookings({ lang }) {
         </p>
       </div>
       <div className="flex gap-3">
-        <StatCard label={t.admin.totalBookings} value={t.admin.items(visibleBookings.length)} />
+        <StatCard label={t.admin.totalBookings} value={t.admin.items(activeBookings.length)} />
         <StatCard label={t.admin.totalRevenue} value={`฿${totalRevenue.toLocaleString()}`} />
       </div>
 
@@ -3822,7 +3889,7 @@ function AdminBookings({ lang }) {
           <div key={b.id} style={{ background: c.white, borderRadius: "0.75rem", border: `1px solid ${c.paperBorder}`, padding: 12 }}>
             <div className="flex justify-between items-start">
               <div>
-                <p style={{ fontSize: 14, fontWeight: 500, color: c.ink }}>{b.name || t.admin.unnamedGuest}</p>
+                <p style={{ fontSize: 14, fontWeight: 500, color: c.ink }}>{b.name || t.admin.unnamedGuest} {b.walkIn && <small style={{ color: c.brass }}>Walk-in</small>} {b.status === "cancelled" && <small style={{ color: c.coral }}>{lang === "th" ? "ยกเลิกแล้ว" : "Cancelled"}</small>}</p>
                 <p style={{ fontSize: 11, color: c.textFaint }}>{b.phone || "-"} · {b.email || "-"}</p>
               </div>
               <p style={{ fontSize: 14, fontWeight: 600, color: c.brass }}>฿{(b.amount || 0).toLocaleString()}</p>
@@ -3850,14 +3917,17 @@ function AdminBookings({ lang }) {
             </div>
             <div className="flex items-center justify-between" style={{ marginTop: 6 }}>
               <p style={{ fontSize: 10, color: c.textFaint, fontFamily: "'IBM Plex Mono', monospace" }}>{b.code}</p>
-              <button
+              {b.status !== "cancelled" && <button
                 type="button"
                 onClick={() => setAssigningRoom(b)}
                 className="flex items-center gap-1"
                 style={{ fontSize: 11, fontWeight: 600, color: c.brass, background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
               >
                 <Building2 size={11} /> {t.admin.assignRoomBtn}
-              </button>
+              </button>}
+              {(b.status !== "cancelled" || roomByCode[b.code]) && <button type="button" disabled={!!closingId} onClick={() => closeBooking(b)} style={{ fontSize: 12, color: c.coral, border: `1px solid ${c.coral}`, borderRadius: 6, padding: "6px 8px", background: c.white, cursor: "pointer" }}>
+                {closingId === b.id ? "…" : b.status === "cancelled" ? (lang === "th" ? "คืนห้องอีกครั้ง" : "Retry room release") : (lang === "th" ? "− ปิดจอง" : "− Cancel booking")}
+              </button>}
             </div>
           </div>
         ))}
@@ -4569,10 +4639,10 @@ function CheckinLookupScreen({ lang, setBooking, onFound, onExit }) {
 
       let match = null;
       if (mode === "code") {
-        match = list.find(b => (b.code || "").trim().toLowerCase() === code.trim().toLowerCase());
+        match = list.filter(b => b.status !== "cancelled").find(b => (b.code || "").trim().toLowerCase() === code.trim().toLowerCase());
       } else {
         const digits = phone.replace(/\D/g, "");
-        match = list.find(b => (b.phone || "").replace(/\D/g, "") === digits && (b.name || "").trim().toLowerCase() === name.trim().toLowerCase());
+        match = list.filter(b => b.status !== "cancelled").find(b => (b.phone || "").replace(/\D/g, "") === digits && (b.name || "").trim().toLowerCase() === name.trim().toLowerCase());
       }
 
       if (!match) {

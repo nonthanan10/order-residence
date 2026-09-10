@@ -68,3 +68,35 @@ export async function confirmBooking(client, record, extraBed) {
     return { roomNo: null };
   }
 }
+
+export async function cancelBooking(client, id) {
+  const current = await client.from('bookings').select('data').eq('id', id).single();
+  if (current.error) throw current.error;
+  const record = current.data?.data;
+  if (!record) throw new Error('Booking not found');
+  if (record.status !== 'cancelled') {
+    const result = await client.from('bookings')
+      .update({ data: { ...record, status: 'cancelled', cancelledAt: new Date().toISOString() } })
+      .eq('id', id).eq('data', JSON.stringify(record)).select('id');
+    if (result.error) throw result.error;
+    if (result.data?.length !== 1) throw new Error('Booking changed; refresh and retry');
+  }
+  // Free only this reservation's assignment; never overwrite a newer room board.
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = await client.from('rooms').select('data').eq('id', 'default').single();
+      if (result.error || !Array.isArray(result.data?.data)) throw new Error('Room board unavailable');
+      const rooms = result.data.data;
+      if (!rooms.some(r => r.code === record.code)) return true;
+      const updated = rooms.map(r => r.code === record.code ? {
+        ...r, status: r.status === 'pending' ? 'ready' : 'cleaning',
+        code: '', guestName: '', phone: '', checkIn: '', checkOut: '', checkInISO: '', checkOutISO: '', hasExtraBed: false,
+      } : r);
+      const saved = await client.from('rooms').update({ data: updated, updated_at: new Date().toISOString() })
+        .eq('id', 'default').eq('data', JSON.stringify(rooms)).select('id');
+      if (saved.error) throw saved.error;
+      if (saved.data?.length === 1) return true;
+    }
+  } catch { /* Cancellation is saved; allow staff to retry room cleanup. */ }
+  return false;
+}
