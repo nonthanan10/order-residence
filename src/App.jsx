@@ -7,7 +7,7 @@ import {
   Upload, Paperclip, Phone, LayoutList, Wallet, Building2, Tv, MessageCircle, FileText, Printer, Scissors, Gift
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
-import { checkAvailability, confirmBooking, cancelBooking, completeCheckout } from "./booking";
+import { checkAvailability, confirmBooking, cancelBooking, completeCheckout, checkoutPaymentState } from "./booking";
 
 /* ------------------------------------------------------------------
 DESIGN TOKENS
@@ -2665,8 +2665,10 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
     return s + (item ? item.price * qty : 0);
   }, 0);
   const taxRate = (settings.taxRate ?? 7) / 100;
-  const tax = Math.round((roomTotal + addonTotal + extrasTotal + minibarTotal) * taxRate);
+  // Room and extra-bed tax was collected at booking; charge only new extras.
+  const tax = Math.round((extrasTotal + minibarTotal) * taxRate);
   const amountDue = extrasTotal + minibarTotal + tax;
+  const paymentState = checkoutPaymentState(amountDue, !!slip, verifying);
 
   const runVerify = async (imageDataUrl) => {
     setVerifying(true);
@@ -2688,7 +2690,7 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
   };
 
   const confirm = async () => {
-    if (checkoutLock.current || verifying || (amountDue > 0 && !slip)) return;
+    if (checkoutLock.current || !paymentState.canConfirm) return;
     checkoutLock.current = true;
     setConfirming(true);
     setCheckoutError("");
@@ -2702,13 +2704,16 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
         extras: booking.extras.map(e => ({ ...e })),
         minibarItems,
         checkoutAmount: amountDue,
-        checkoutPaid: amountDue === 0 || !!slip,
+        checkoutPaid: paymentState.checkoutPaid,
         checkoutPaymentStatus: amountDue === 0 ? "no_payment_due" : "slip_submitted",
         checkoutSlipCheck: slipCheck || null,
       });
       onNext();
-    } catch {
-      setCheckoutError(lang === "th" ? "เช็คเอาท์ไม่สำเร็จ กรุณาลองใหม่ หากยังไม่ได้ให้ติดต่อเจ้าหน้าที่ และไม่ต้องโอนเงินซ้ำ" : "Checkout could not be completed. Retry or contact staff. Do not pay again.");
+    } catch (error) {
+      const roomIssue = ["Missing booking or room", "Room assignment changed; contact staff", "Room is not checked in"].includes(error.message);
+      if (roomIssue) {
+        setCheckoutError(lang === "th" ? "สถานะห้องยังไม่พร้อมเช็คเอาท์ กรุณาติดต่อเจ้าหน้าที่เพื่อตรวจสอบห้องและสถานะเช็คอิน" : "The room is not ready for checkout. Contact staff to check the room assignment and check-in status.");
+      } else setCheckoutError(lang === "th" ? "เช็คเอาท์ไม่สำเร็จ กรุณาลองใหม่ หากยังไม่ได้ให้ติดต่อเจ้าหน้าที่ และไม่ต้องโอนเงินซ้ำ" : "Checkout could not be completed. Retry or contact staff. Do not pay again.");
     } finally {
       checkoutLock.current = false;
       setConfirming(false);
@@ -2805,7 +2810,7 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
       </div>
 
       {checkoutError && <p role="alert" style={{ fontSize: 13, color: c.coral }}>{checkoutError}</p>}
-      <PrimaryButton onClick={confirm} disabled={confirming || (amountDue > 0 && (!slip || verifying))} icon={confirming ? undefined : Receipt}>
+      <PrimaryButton onClick={confirm} disabled={confirming || !paymentState.canConfirm} icon={confirming ? undefined : Receipt}>
         {confirming ? <><Loader2 size={16} className="animate-spin" /> {t.checkout.processing}</> : t.checkout.confirmBtn}
       </PrimaryButton>
       {amountDue > 0 && !slip && <p style={{ fontSize: 11, color: c.textFaint, textAlign: "center" }}>{t.payment.needSlip}</p>}

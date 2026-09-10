@@ -102,7 +102,7 @@ export async function cancelBooking(client, id) {
 }
 
 export async function completeCheckout(client, bookingCode, roomNo, summary) {
-  if (!bookingCode || !roomNo) throw new Error('Missing booking or room');
+  if (!bookingCode) throw new Error('Missing booking or room');
   const found = await client.from('bookings').select('id, data').eq('data->>code', bookingCode).single();
   if (found.error) throw found.error;
   if (!found.data || found.data.data.status === 'cancelled') throw new Error('Booking unavailable');
@@ -118,7 +118,8 @@ export async function completeCheckout(client, bookingCode, roomNo, summary) {
     if (board.error) throw board.error;
     if (!Array.isArray(board.data?.data)) throw new Error('Room board unavailable');
     const rooms = board.data.data;
-    const target = rooms.find(r => r.number === roomNo && r.code === bookingCode);
+    const assigned = rooms.filter(r => r.code === bookingCode);
+    const target = assigned.length === 1 ? assigned[0] : assigned.find(r => r.number === roomNo);
     if (!target) throw new Error('Room assignment changed; contact staff');
     if (target.status === 'checkout') return;
     if (target.status !== 'occupied') throw new Error('Room is not checked in');
@@ -131,4 +132,13 @@ export async function completeCheckout(client, bookingCode, roomNo, summary) {
     if (result.data?.length === 1) return;
   }
   throw new Error('Room board changed; retry');
+}
+
+export function checkoutPaymentState(amountDue, slipAttached, verifying = false) {
+  const valid = Number.isFinite(amountDue) && amountDue >= 0;
+  const requiresPayment = valid && amountDue > 0;
+  return {
+    checkoutPaid: valid && (!requiresPayment || !!slipAttached),
+    canConfirm: valid && (!requiresPayment || (!!slipAttached && !verifying)),
+  };
 }
