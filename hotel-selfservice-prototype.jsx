@@ -1047,7 +1047,7 @@ export default function HotelPrototype() {
     phone: "",
     idVerified: false,
     code: "",
-    roomNo: "1207",
+    roomNo: "",
     extras: [],
     minibar: {},
   });
