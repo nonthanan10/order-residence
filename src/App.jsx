@@ -7,6 +7,7 @@ import {
   Upload, Paperclip, Phone, LayoutList, Wallet, Building2, Tv, MessageCircle, FileText, Printer, Scissors, Gift
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
+import { checkAvailability, confirmBooking } from "./booking";
 
 /* ------------------------------------------------------------------
 DESIGN TOKENS
@@ -191,17 +192,7 @@ async function storageSet(key, value, shared = true) {
     }
 
     if (key === BOOKINGS_KEY) {
-      const list = JSON.parse(value);
-      await supabase.from("bookings").delete().neq("id", "");
-      if (list.length > 0) {
-        const rows = list.map((b) => ({
-          id: b.id || `bk-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          data: b,
-          created_at: b.createdAt || new Date().toISOString(),
-        }));
-        await supabase.from("bookings").insert(rows);
-      }
-      return { key, value, shared };
+      throw new Error("Use an individual booking insert or update");
     }
 
     if (key === INVOICE_REQUESTS_KEY) {
@@ -237,7 +228,7 @@ async function storageDelete(key, shared = true) {
     } else if (key === ROOMS_KEY) {
       await supabase.from("rooms").delete().eq("id", "default");
     } else if (key === BOOKINGS_KEY) {
-      await supabase.from("bookings").delete().neq("id", "");
+      throw new Error("Deleting bookings from the client is disabled");
     } else if (key === INVOICE_REQUESTS_KEY) {
       await supabase.from("invoice_requests").delete().neq("id", "");
     } else if (key === LANG_KEY) {
@@ -1332,7 +1323,6 @@ export default function HotelPrototype() {
       view: lang === "th" ? "วิวเมือง" : "City view",
       price: settings.price,
       perks: ["wifi"],
-      available: HOTEL_ROOM_COUNT,
       image: settings.roomImage,
     },
   ]), [settings.price, settings.roomImage, lang]);
@@ -1651,8 +1641,22 @@ function SearchScreen({ lang, booking, setBooking, settings, onNext, onCheckin }
 function ResultsScreen({ lang, rooms, booking, setBooking, onNext }) {
   const t = STRINGS[lang];
   const [extraBed, setExtraBed] = useState(false);
-
+  const [availability, setAvailability] = useState(null);
+  const [availabilityError, setAvailabilityError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const dates = `${booking.checkInISO}/${booking.checkOutISO}`;
+  useEffect(() => {
+    let active = true;
+    setAvailability(null);
+    setAvailabilityError(false);
+    checkAvailability(supabase, booking.checkInISO, booking.checkOutISO)
+      .then(result => { if (active) setAvailability({ ...result, dates }); })
+      .catch(() => { if (active) setAvailabilityError(true); });
+    return () => { active = false; };
+  }, [dates, attempt]);
+  const canSelect = availability?.dates === dates && availability.available && !availabilityError;
   const selectRoom = (r) => {
+    if (!canSelect) return;
     setBooking(b => ({ ...b, room: r, extraBed }));
     onNext();
   };
@@ -1662,11 +1666,20 @@ function ResultsScreen({ lang, rooms, booking, setBooking, onNext }) {
       <p style={{ fontSize: 14, color: c.textMuted }}>
         {t.results.summaryLine(booking.checkIn, booking.checkOut, booking.guests, rooms[0] ? rooms[0].price.toLocaleString() : "")}
       </p>
+      <p role="status" style={{ fontSize: 13, color: canSelect ? c.teal : c.coral }}>
+        {availabilityError
+          ? (lang === "th" ? "ตรวจสอบห้องว่างไม่สำเร็จ กรุณาลองใหม่" : "Unable to check availability. Please retry.")
+          : !availability ? (lang === "th" ? "กำลังตรวจสอบห้องว่าง…" : "Checking availability…")
+          : !canSelect ? (lang === "th" ? "ห้องเต็มสำหรับวันที่เลือก กรุณาเลือกวันที่อื่น" : "No rooms available for these dates. Please choose other dates.")
+          : (lang === "th" ? `เหลือ ${availability.remaining} ห้องสำหรับวันที่เลือก` : `${availability.remaining} rooms remaining for these dates`)}
+      </p>
+      {availabilityError && <PrimaryButton onClick={() => setAttempt(n => n + 1)}>{lang === "th" ? "ลองใหม่" : "Retry"}</PrimaryButton>}
       {rooms.map((r) => (
         <div
           key={r.id}
           role="button"
-          tabIndex={0}
+          tabIndex={canSelect ? 0 : -1}
+          aria-disabled={!canSelect}
           onClick={() => selectRoom(r)}
           onKeyDown={(e) => { if (e.key === "Enter") selectRoom(r); }}
           style={{ background: c.white, borderRadius: "1rem", border: `1px solid ${c.paperBorder}`, overflow: "hidden", cursor: "pointer" }}
@@ -1719,6 +1732,7 @@ function ResultsScreen({ lang, rooms, booking, setBooking, onNext }) {
               </div>
               <button
                 type="button"
+                disabled={!canSelect}
                 onClick={(e) => { e.stopPropagation(); selectRoom(r); }}
                 style={{ padding: "10px 20px", borderRadius: "0.5rem", background: c.tealDark, color: c.white, fontSize: 14, fontWeight: 600, border: "none", cursor: "pointer" }}
               >
@@ -1888,6 +1902,9 @@ const PAYMENT_QR_IMAGE = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wB
 function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
   const t = STRINGS[lang];
   const [processing, setProcessing] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
+  const payingRef = useRef(false);
+  const recordRef = useRef(null);
   const [slip, setSlip] = useState(null);
   const [verifying, setVerifying] = useState(false);
   const [slipCheck, setSlipCheck] = useState(null);
@@ -1920,76 +1937,49 @@ function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
   };
 
   const pay = async () => {
+    if (payingRef.current || !slip || verifying) return;
+    payingRef.current = true;
     setProcessing(true);
-    const freshCode = generateBookingCode();
-    const compressedSlip = slip ? await compressImage(slip, 640, 0.7) : null;
-    const record = {
-      id: `${freshCode}-${Date.now()}`,
-      code: freshCode,
-      name: booking.name,
-      phone: booking.phone,
-      email: booking.email,
-      roomName: booking.room ? booking.room.name : "",
-      checkIn: booking.checkIn,
-      checkOut: booking.checkOut,
-      checkInISO: booking.checkInISO,
-      checkOutISO: booking.checkOutISO,
-      amount: grandTotal,
-      slipAttached: !!slip,
-      slipImage: compressedSlip,
-      slipCheck: slipCheck || null,
-      paidAt: new Date().toISOString(),
-    };
-
-    let bookingSaved = false;
+    setPaymentError("");
     try {
-      let list = [];
-      try {
-        const existing = await storageGet(BOOKINGS_KEY, true);
-        if (existing && existing.value) list = JSON.parse(existing.value);
-      } catch (e) {
-        list = [];
+      if (!recordRef.current) {
+        const availability = await checkAvailability(supabase, booking.checkInISO, booking.checkOutISO);
+        if (!availability.available) throw { code: "P0001" };
       }
-      list.push(record);
-      const result = await storageSet(BOOKINGS_KEY, JSON.stringify(list), true);
-      bookingSaved = !!result;
-      if (!result) console.error("Storage set failed for BOOKINGS_KEY (returned null)");
-    } catch (e) {
-      console.error("Storage error while saving booking:", e);
-    }
-
-    let roomAssigned = false;
-    try {
-      let rooms = [];
-      try {
-        const existingRooms = await storageGet(ROOMS_KEY, true);
-        rooms = existingRooms && existingRooms.value ? JSON.parse(existingRooms.value) : buildDefaultRooms();
-      } catch (e) {
-        rooms = buildDefaultRooms();
-      }
-      const readyRooms = rooms.filter(r => r.status === "ready");
-      const eligibleRooms = booking.extraBed ? readyRooms.filter(r => !r.noExtraBed) : readyRooms;
-      let target = eligibleRooms[0] || readyRooms[0] || rooms[0];
-      const updatedRooms = rooms.map(r => r.number === target.number ? {
-        ...r,
-        status: "pending",
-        guestName: booking.name,
+      const freshCode = recordRef.current?.code || generateBookingCode();
+      const compressedSlip = slip ? await compressImage(slip, 640, 0.7) : null;
+      const record = recordRef.current || {
+        id: `${freshCode}-${Date.now()}`,
+        code: freshCode,
+        name: booking.name,
         phone: booking.phone,
+        email: booking.email,
+        roomName: booking.room ? booking.room.name : "",
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
-        code: freshCode,
-        hasExtraBed: !!booking.extraBed,
-      } : r);
-      const roomResult = await storageSet(ROOMS_KEY, JSON.stringify(updatedRooms), true);
-      roomAssigned = !!roomResult;
-      if (roomResult) setBooking(b => ({ ...b, roomNo: target.number }));
-      else console.error("Storage set failed for ROOMS_KEY (returned null)");
-    } catch (e) {
-      console.error("Storage error while assigning room:", e);
-    }
+        checkInISO: booking.checkInISO,
+        checkOutISO: booking.checkOutISO,
+        amount: grandTotal,
+        slipAttached: !!slip,
+        slipImage: compressedSlip,
+        slipCheck: slipCheck || null,
+        paidAt: new Date().toISOString(),
+      };
 
-    setBooking(b => ({ ...b, code: freshCode, backendSynced: bookingSaved && roomAssigned, usingFallback: isUsingFallback() }));
-    setTimeout(() => { setProcessing(false); onNext(); }, 1200);
+      recordRef.current = record;
+      // The database capacity trigger makes the final decision, including races
+      // after the availability check. No room writes occur if this fails.
+      const { roomNo } = await confirmBooking(supabase, record, booking.extraBed);
+      setBooking(b => ({ ...b, code: record.code, roomNo, assignmentPending: !roomNo, backendSynced: true, usingFallback: false }));
+      onNext();
+    } catch (error) {
+      setPaymentError(error.code === "P0001"
+        ? (lang === "th" ? "ห้องเต็มสำหรับวันที่เลือก กรุณาเลือกวันที่อื่น" : "No rooms available for these dates. Please choose other dates.")
+        : (lang === "th" ? "ไม่สามารถยืนยันการจองได้ กรุณาลองใหม่ หากโอนเงินแล้วอย่าโอนซ้ำ และติดต่อเจ้าหน้าที่" : "Unable to confirm your booking. Please retry. If you have paid, do not pay again; contact staff."));
+    } finally {
+      payingRef.current = false;
+      setProcessing(false);
+    }
   };
 
   return (
@@ -2063,6 +2053,7 @@ function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
         <SlipCheckResult lang={lang} result={slipCheck} expected={{ amount: grandTotal, name: HOTEL_ACCOUNT_NAME }} />
       )}
 
+      {paymentError && <p role="alert" style={{ color: c.coral, fontSize: 13 }}>{paymentError}</p>}
       <PrimaryButton onClick={pay} disabled={!slip || processing || verifying} icon={processing ? undefined : Paperclip}>
         {processing ? <><Loader2 size={16} className="animate-spin" /> {t.payment.processing}</> : t.payment.confirmBtn}
       </PrimaryButton>
@@ -2128,6 +2119,13 @@ function ConfirmedScreen({ lang, booking, onRestart }) {
               : "This booking couldn't be saved at all (not even temporarily) — please try booking again."}
           </p>
         </div>
+      )}
+
+      {booking.assignmentPending && (
+        <p role="status" style={{ color: c.brass, fontSize: 13 }}>
+          {lang === "th" ? "บันทึกการจองแล้ว อยู่ระหว่างจัดห้อง กรุณาติดต่อเจ้าหน้าที่พร้อมรหัสการจอง โดยไม่ต้องจองหรือโอนเงินซ้ำ" : "Your booking is saved and room assignment is pending. Contact staff with your booking code; do not book or pay again."}
+          <a href={STAFF_CONTACT_URL} target="_blank" rel="noopener noreferrer" style={{ display: "block", textDecoration: "underline" }}>{lang === "th" ? "ติดต่อเจ้าหน้าที่" : "Contact staff"}</a>
+        </p>
       )}
 
       <PrimaryButton onClick={onRestart}>
@@ -3745,7 +3743,9 @@ function AdminBookings({ lang }) {
     setBookings(updatedList);
     setViewingSlip(prev => prev && prev.id === bookingRecord.id ? { ...prev, slipCheck: result } : prev);
     try {
-      await storageSet(BOOKINGS_KEY, JSON.stringify(updatedList), true);
+      const { error } = await supabase.from("bookings")
+        .update({ data: { ...bookingRecord, slipCheck: result } }).eq("id", bookingRecord.id);
+      if (error) throw error;
     } catch (e) {
       // storage unavailable — result still shows for this session
     }
