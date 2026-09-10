@@ -7,7 +7,7 @@ import {
   Upload, Paperclip, Phone, LayoutList, Wallet, Building2, Tv, MessageCircle, FileText, Printer, Scissors, Gift
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
-import { checkAvailability, confirmBooking, cancelBooking } from "./booking";
+import { checkAvailability, confirmBooking, cancelBooking, completeCheckout } from "./booking";
 
 /* ------------------------------------------------------------------
 DESIGN TOKENS
@@ -2648,6 +2648,8 @@ function MinibarModal({ lang, booking, setBooking, catalog, onClose }) {
 function CheckoutScreen({ lang, booking, settings, onNext }) {
   const t = STRINGS[lang];
   const [confirming, setConfirming] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
+  const checkoutLock = useRef(false);
   const [slip, setSlip] = useState(null);
   const [verifying, setVerifying] = useState(false);
   const [slipCheck, setSlipCheck] = useState(null);
@@ -2686,24 +2688,31 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
   };
 
   const confirm = async () => {
+    if (checkoutLock.current || verifying || (amountDue > 0 && !slip)) return;
+    checkoutLock.current = true;
     setConfirming(true);
+    setCheckoutError("");
     try {
-      const existingRooms = await storageGet(ROOMS_KEY, true);
-      const rooms = existingRooms && existingRooms.value ? JSON.parse(existingRooms.value) : buildDefaultRooms();
-      const updatedRooms = rooms.map(r => r.number === booking.roomNo ? {
-        ...r,
-        status: "checkout",
-        guestName: "",
-        phone: "",
-        checkIn: "",
-        checkOut: "",
-        code: "",
-      } : r);
-      await storageSet(ROOMS_KEY, JSON.stringify(updatedRooms), true);
-    } catch (e) {
-      // storage unavailable — room board just won't sync for this session
+      const minibarItems = minibarEntries.map(([id, qty]) => {
+        const item = minibarCatalog.find(m => m.id === id);
+        if (!item) throw new Error("Minibar item unavailable");
+        return { id, name: item.name, qty, price: item.price };
+      });
+      await completeCheckout(supabase, booking.code, booking.roomNo, {
+        extras: booking.extras.map(e => ({ ...e })),
+        minibarItems,
+        checkoutAmount: amountDue,
+        checkoutPaid: amountDue === 0 || !!slip,
+        checkoutPaymentStatus: amountDue === 0 ? "no_payment_due" : "slip_submitted",
+        checkoutSlipCheck: slipCheck || null,
+      });
+      onNext();
+    } catch {
+      setCheckoutError(lang === "th" ? "เช็คเอาท์ไม่สำเร็จ กรุณาลองใหม่ หากยังไม่ได้ให้ติดต่อเจ้าหน้าที่ และไม่ต้องโอนเงินซ้ำ" : "Checkout could not be completed. Retry or contact staff. Do not pay again.");
+    } finally {
+      checkoutLock.current = false;
+      setConfirming(false);
     }
-    setTimeout(onNext, 1200);
   };
 
   return (
@@ -2795,6 +2804,7 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
         <p style={{ fontSize: 12, color: c.textMuted }}>{t.checkout.keyNote}</p>
       </div>
 
+      {checkoutError && <p role="alert" style={{ fontSize: 13, color: c.coral }}>{checkoutError}</p>}
       <PrimaryButton onClick={confirm} disabled={confirming || (amountDue > 0 && (!slip || verifying))} icon={confirming ? undefined : Receipt}>
         {confirming ? <><Loader2 size={16} className="animate-spin" /> {t.checkout.processing}</> : t.checkout.confirmBtn}
       </PrimaryButton>

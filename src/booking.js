@@ -100,3 +100,35 @@ export async function cancelBooking(client, id) {
   } catch { /* Cancellation is saved; allow staff to retry room cleanup. */ }
   return false;
 }
+
+export async function completeCheckout(client, bookingCode, roomNo, summary) {
+  if (!bookingCode || !roomNo) throw new Error('Missing booking or room');
+  const found = await client.from('bookings').select('id, data').eq('data->>code', bookingCode).single();
+  if (found.error) throw found.error;
+  if (!found.data || found.data.data.status === 'cancelled') throw new Error('Booking unavailable');
+  const record = found.data.data;
+  const saved = await client.from('bookings').update({ data: {
+    ...record, ...summary, checkoutAt: record.checkoutAt || new Date().toISOString(),
+  } }).eq('id', found.data.id).eq('data', JSON.stringify(record)).select('id');
+  if (saved.error) throw saved.error;
+  if (saved.data?.length !== 1) throw new Error('Booking changed; retry');
+  // Only change room status after the summary is committed for the email trigger.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const board = await client.from('rooms').select('data').eq('id', 'default').single();
+    if (board.error) throw board.error;
+    if (!Array.isArray(board.data?.data)) throw new Error('Room board unavailable');
+    const rooms = board.data.data;
+    const target = rooms.find(r => r.number === roomNo && r.code === bookingCode);
+    if (!target) throw new Error('Room assignment changed; contact staff');
+    if (target.status === 'checkout') return;
+    if (target.status !== 'occupied') throw new Error('Room is not checked in');
+    // Retain the booking code until staff clear the room so notifications and
+    // retries can still identify this reservation.
+    const updated = rooms.map(r => r === target ? { ...r, status: 'checkout' } : r);
+    const result = await client.from('rooms').update({ data: updated, updated_at: new Date().toISOString() })
+      .eq('id', 'default').eq('data', JSON.stringify(rooms)).select('id');
+    if (result.error) throw result.error;
+    if (result.data?.length === 1) return;
+  }
+  throw new Error('Room board changed; retry');
+}
