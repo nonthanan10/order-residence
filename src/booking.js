@@ -106,12 +106,13 @@ export async function completeCheckout(client, bookingCode, roomNo, summary) {
   const found = await client.from('bookings').select('id, data').eq('data->>code', bookingCode).single();
   if (found.error) throw found.error;
   if (!found.data || found.data.data.status === 'cancelled') throw new Error('Booking unavailable');
-  const record = found.data.data;
-  const saved = await client.from('bookings').update({ data: {
-    ...record, ...summary, checkoutAt: record.checkoutAt || new Date().toISOString(),
-  } }).eq('id', found.data.id).eq('data', JSON.stringify(record)).select('id');
+  // Never put the full booking (including base64 slips) into a URL filter.
+  // Merge only checkout fields in PostgreSQL, preserving concurrent edits.
+  const saved = await client.rpc('save_checkout_summary', {
+    p_booking_id: found.data.id, p_booking_code: bookingCode, p_summary: summary,
+  });
   if (saved.error) throw saved.error;
-  if (saved.data?.length !== 1) throw new Error('Booking changed; retry');
+  if (saved.data !== true) throw new Error('Booking changed; retry');
   // Only change room status after the summary is committed for the email trigger.
   for (let attempt = 0; attempt < 3; attempt++) {
     const board = await client.from('rooms').select('data').eq('id', 'default').single();
