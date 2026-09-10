@@ -142,3 +142,40 @@ export function checkoutPaymentState(amountDue, slipAttached, verifying = false)
     canConfirm: valid && (!requiresPayment || (!!slipAttached && !verifying)),
   };
 }
+
+export const normalizedRoomStatus = room => String(room?.status || '').trim().toLowerCase();
+export const canSelectRoom = (room, code, extraBed = false) => {
+  const own = !!code && room.code === code;
+  return (own ? ['pending', 'occupied'].includes(normalizedRoomStatus(room)) : normalizedRoomStatus(room) === 'ready' && !room.code)
+    && (!extraBed || !room.noExtraBed);
+};
+export async function assignSelectedRoom(client, booking, number) {
+  const found = await client.from('bookings').select('id, data').eq('id', booking.id).single();
+  if (found.error) throw found.error;
+  const record = found.data?.data;
+  if (!record || record.status === 'cancelled') throw new Error('Booking unavailable');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const board = await client.from('rooms').select('data').eq('id', 'default').single();
+    if (board.error) throw board.error;
+    const rooms = board.data?.data;
+    if (!Array.isArray(rooms)) throw new Error('Room board unavailable');
+    const current = rooms.find(r => r.code === record.code);
+    const extraBed = !!(record.extraBed || current?.hasExtraBed);
+    const target = rooms.find(r => r.number === number);
+    if (!target || !canSelectRoom(target, record.code, extraBed)) throw new Error('Selected room is unavailable');
+    if (current === target) return;
+    const updated = rooms.map(r => r === target ? {
+      ...r, status: current && normalizedRoomStatus(current) === 'occupied' ? 'occupied' : 'pending',
+      guestName: record.name, phone: record.phone, code: record.code,
+      checkIn: record.checkIn, checkOut: record.checkOut, checkInISO: record.checkInISO, checkOutISO: record.checkOutISO, hasExtraBed: extraBed,
+    } : r === current ? {
+      ...r, status: normalizedRoomStatus(current) === 'occupied' ? 'cleaning' : 'ready',
+      guestName: '', phone: '', code: '', checkIn: '', checkOut: '', checkInISO: '', checkOutISO: '', hasExtraBed: false,
+    } : r);
+    const saved = await client.from('rooms').update({ data: updated, updated_at: new Date().toISOString() })
+      .eq('id', 'default').eq('data', JSON.stringify(rooms)).select('id');
+    if (saved.error) throw saved.error;
+    if (saved.data?.length === 1) return;
+  }
+  throw new Error('Rooms changed; retry');
+}

@@ -7,7 +7,7 @@ import {
   Upload, Paperclip, Phone, LayoutList, Wallet, Building2, Tv, MessageCircle, FileText, Printer, Scissors, Gift
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
-import { checkAvailability, confirmBooking, cancelBooking, completeCheckout, checkoutPaymentState } from "./booking";
+import { checkAvailability, confirmBooking, cancelBooking, completeCheckout, checkoutPaymentState, normalizedRoomStatus, canSelectRoom, assignSelectedRoom } from "./booking";
 
 /* ------------------------------------------------------------------
 DESIGN TOKENS
@@ -1278,7 +1278,7 @@ export default function HotelPrototype() {
     phone: "",
     idVerified: false,
     code: "",
-    roomNo: "1207",
+    roomNo: "",
     extras: [],
     minibar: {},
   });
@@ -1955,6 +1955,7 @@ function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
         phone: booking.phone,
         email: booking.email,
         roomName: booking.room ? booking.room.name : "",
+      extraBed: !!booking.extraBed,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         checkInISO: booking.checkInISO,
@@ -2305,6 +2306,13 @@ function VerifyScreen({ lang, booking, setBooking, onNext }) {
   );
 }
 
+function MissingRoomNotice({ lang }) {
+  return <div role="alert" style={{ padding: 20, color: c.tealDark, textAlign: "center" }}>
+    <p>{lang === "th" ? "ยังไม่มีห้องที่จัดไว้ กรุณาติดต่อเจ้าหน้าที่ แล้วค้นหารหัสจองอีกครั้งหลังจัดห้องเรียบร้อย" : "No room assigned yet. Contact staff, then look up your booking again after assignment."}</p>
+    <a href={STAFF_CONTACT_URL} target="_blank" rel="noopener noreferrer" style={{ display: "block", marginTop: 12, color: c.brass, textDecoration: "underline" }}>{lang === "th" ? "ติดต่อเจ้าหน้าที่" : "Contact staff"}</a>
+  </div>;
+}
+
 function KeyScreen({ lang, booking, settings, onNext }) {
   const t = STRINGS[lang];
   const [revealed, setRevealed] = useState(false);
@@ -2316,8 +2324,8 @@ function KeyScreen({ lang, booking, settings, onNext }) {
       try {
         const res = await storageGet(ROOMS_KEY, true);
         const rooms = res && res.value ? JSON.parse(res.value) : null;
-        if (!rooms) return;
-        const updated = rooms.map(r => (r.number === booking.roomNo && r.status === "pending") ? { ...r, status: "occupied" } : r);
+        if (!rooms || !ROOM_NUMBERS.some(r => r.number === booking.roomNo)) return;
+        const updated = rooms.map(r => (r.number === booking.roomNo && r.code === booking.code && r.status === "pending") ? { ...r, status: "occupied" } : r);
         await storageSet(ROOMS_KEY, JSON.stringify(updated), true);
       } catch (e) {
         // room board unavailable — the digital key still works for this session
@@ -2325,6 +2333,8 @@ function KeyScreen({ lang, booking, settings, onNext }) {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  if (!ROOM_NUMBERS.some(r => r.number === booking.roomNo)) return <MissingRoomNotice lang={lang} />;
 
   return (
     <div className="pt-4" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 24 }}>
@@ -2468,6 +2478,8 @@ function StayScreen({ lang, booking, setBooking, settings, onCheckout }) {
     const item = minibarCatalog.find(m => m.id === id);
     return s + (item ? item.price * qty : 0);
   }, 0);
+
+  if (!ROOM_NUMBERS.some(r => r.number === booking.roomNo)) return <MissingRoomNotice lang={lang} />;
 
   return (
     <div className="pt-2" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -4002,6 +4014,7 @@ function AdminRoomAssignModal({ lang, booking, onClose, onAssigned }) {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [saving, setSaving] = useState(false);
+  const savingLock = useRef(false);
   const [error, setError] = useState("");
 
   const statusMeta = {
@@ -4016,15 +4029,19 @@ function AdminRoomAssignModal({ lang, booking, onClose, onAssigned }) {
     setLoading(true);
     try {
       const res = await storageGet(ROOMS_KEY, true);
-      const list = res && res.value ? JSON.parse(res.value) : buildDefaultRooms();
+      if (!res?.value) throw new Error("Room board unavailable");
+      const list = JSON.parse(res.value);
+      if (!Array.isArray(list)) throw new Error("Invalid rooms");
       setRooms(list);
       const current = list.find(r => r.code === booking.code);
       if (current) {
         setSelected(current.number);
-        setFloor(current.floor);
+        setFloor(Number(current.floor));
       }
     } catch (e) {
-      setRooms(buildDefaultRooms());
+      setRooms(null);
+      setSelected(null);
+      setError(lang === "th" ? "โหลดข้อมูลห้องไม่สำเร็จ กรุณาปิดแล้วเปิดใหม่" : "Unable to load rooms. Close and reopen.");
     } finally {
       setLoading(false);
     }
@@ -4033,47 +4050,25 @@ function AdminRoomAssignModal({ lang, booking, onClose, onAssigned }) {
   useEffect(() => { load(); }, []);
 
   const currentRoom = (rooms || []).find(r => r.code === booking.code);
-  const floorRooms = (rooms || []).filter(r => r.floor === floor);
-  const hasExtraBed = currentRoom ? !!currentRoom.hasExtraBed : false;
+  const floorRooms = (rooms || []).filter(r => Number(r.floor) === floor);
+  const hasExtraBed = !!(booking.extraBed || currentRoom?.hasExtraBed);
 
   const pick = (room) => {
-    if (room.number === (currentRoom && currentRoom.number)) { setSelected(room.number); setError(""); return; }
-    if (room.status !== "ready") return;
-    if (hasExtraBed && room.noExtraBed) { setError(t.admin.cannotAssignExtraBed); return; }
+    if (saving || !canSelectRoom(room, booking.code, hasExtraBed)) return;
     setError("");
     setSelected(room.number);
   };
-
   const confirm = async () => {
-    if (!selected || !rooms) return;
+    if (!selected || !rooms || savingLock.current) return;
+    savingLock.current = true;
     setSaving(true);
-    const target = rooms.find(r => r.number === selected);
-    const carryStatus = currentRoom ? currentRoom.status : "pending";
-    const updated = rooms.map(r => {
-      if (currentRoom && r.number === currentRoom.number && r.number !== target.number) {
-        return { ...r, status: "ready", guestName: "", phone: "", checkIn: "", checkOut: "", code: "", hasExtraBed: false };
-      }
-      if (r.number === target.number) {
-        return {
-          ...r,
-          status: carryStatus,
-          guestName: booking.name,
-          phone: booking.phone,
-          checkIn: booking.checkIn,
-          checkOut: booking.checkOut,
-          code: booking.code,
-          hasExtraBed,
-        };
-      }
-      return r;
-    });
+    setError("");
     try {
-      await storageSet(ROOMS_KEY, JSON.stringify(updated), true);
-    } catch (e) {
-      // storage unavailable — assignment still applies for this session
-    }
-    setSaving(false);
-    onAssigned();
+      await assignSelectedRoom(supabase, booking, selected);
+      onAssigned();
+    } catch {
+      setError(lang === "th" ? "จัดห้องไม่สำเร็จ ห้องอาจถูกจองแล้ว กรุณาปิดแล้วเปิดใหม่เพื่อตรวจสอบ และเลือกห้องอีกครั้ง" : "Room assignment failed. Reopen to refresh availability and select again.");
+    } finally { savingLock.current = false; setSaving(false); }
   };
 
   return (
@@ -4099,6 +4094,7 @@ function AdminRoomAssignModal({ lang, booking, onClose, onAssigned }) {
           <p style={{ fontSize: 11, color: c.textMuted, marginTop: 6 }}>
             {t.admin.currentRoomLabel}: <b style={{ color: c.ink }}>{currentRoom ? currentRoom.number : t.admin.noRoomAssigned}</b>
           </p>
+          <p role="status" style={{ fontSize: 13, color: c.brass, marginTop: 8 }}>{lang === "th" ? "ห้องที่เลือก" : "Selected room"}: <b>{selected || "—"}</b></p>
         </div>
 
         <div className="flex gap-2" style={{ marginBottom: 10 }}>
@@ -4111,16 +4107,17 @@ function AdminRoomAssignModal({ lang, booking, onClose, onAssigned }) {
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
             {floorRooms.map(r => {
-              const meta = statusMeta[r.status] || statusMeta.ready;
+              const meta = statusMeta[normalizedRoomStatus(r)] || { label: lang === "th" ? "ไม่พร้อมใช้งาน" : "Unavailable", color: c.textFaint };
               const isCurrent = currentRoom && r.number === currentRoom.number;
-              const selectable = r.status === "ready" || isCurrent;
+              const selectable = canSelectRoom(r, booking.code, hasExtraBed);
               const isSelected = selected === r.number;
               return (
                 <button
                   type="button"
                   key={r.number}
                   onClick={() => pick(r)}
-                  disabled={!selectable}
+                  disabled={!selectable || saving}
+                  aria-pressed={isSelected}
                   style={{
                     padding: "10px 0",
                     borderRadius: "0.6rem",
@@ -4141,7 +4138,7 @@ function AdminRoomAssignModal({ lang, booking, onClose, onAssigned }) {
 
         {error && <p style={{ fontSize: 12, color: c.coral, marginBottom: 10 }}>{error}</p>}
 
-        <PrimaryButton onClick={confirm} disabled={!selected || saving}>
+        <PrimaryButton onClick={confirm} disabled={!selected || saving || loading || !rooms}>
           {saving ? <><Loader2 size={16} className="animate-spin" /> {t.admin.assigning}</> : t.admin.confirmAssign}
         </PrimaryButton>
       </div>
@@ -4699,7 +4696,7 @@ function CheckinLookupScreen({ lang, setBooking, onFound, onExit }) {
         checkOut: match.checkOut || b.checkOut,
         checkInISO: match.checkInISO || b.checkInISO,
         checkOutISO: match.checkOutISO || b.checkOutISO,
-        roomNo: roomNo || b.roomNo,
+        roomNo: roomNo || "",
         extras: returning ? b.extras : [],
         minibar: returning ? b.minibar : {},
         idVerified: returning ? true : false,
