@@ -3731,6 +3731,7 @@ function AdminBookings({ lang }) {
   const t = STRINGS[lang];
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState("");
   const [viewingSlip, setViewingSlip] = useState(null); // booking object | null
   const [checkingSlipId, setCheckingSlipId] = useState(null);
   const [assigningRoom, setAssigningRoom] = useState(null); // booking object | null
@@ -3776,12 +3777,30 @@ function AdminBookings({ lang }) {
 
   useEffect(() => { load(); }, []);
 
-  const totalRevenue = bookings.reduce((s, b) => s + (b.amount || 0), 0);
+  // Check-out day is excluded: a stay from 21 to 23 appears on 21 and 22.
+  const visibleBookings = selectedDate
+    ? bookings.filter(b => b.checkInISO && b.checkOutISO && b.checkInISO <= selectedDate && selectedDate < b.checkOutISO)
+    : bookings;
+  const totalRevenue = visibleBookings.reduce((s, b) => s + (b.amount || 0), 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: c.white, borderRadius: "0.75rem", padding: 12, border: `1px solid ${c.paperBorder}` }}>
+        <label htmlFor="admin-booking-date" className="flex items-center gap-2" style={{ fontSize: 13, fontWeight: 600, color: c.tealDark, marginBottom: 8 }}>
+          <Calendar size={16} /> {lang === "th" ? "เลือกวันที่ดูรายการจอง" : "View bookings by stay date"}
+        </label>
+        <input id="admin-booking-date" type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+          style={{ width: "100%", minWidth: 0, padding: "10px 12px", borderRadius: "0.5rem", border: `1px solid ${c.paperBorder}`, color: c.ink, background: c.paper }} />
+        <div className="flex gap-2" style={{ marginTop: 8 }}>
+          <button type="button" onClick={() => setSelectedDate(todayISO())} style={{ padding: "8px 14px", borderRadius: "0.5rem", border: "none", background: c.tealDark, color: c.white, cursor: "pointer" }}>{lang === "th" ? "วันนี้" : "Today"}</button>
+          <button type="button" onClick={() => setSelectedDate("")} style={{ padding: "8px 14px", borderRadius: "0.5rem", border: `1px solid ${c.brassPale}`, background: c.brassBg, color: c.brass, cursor: "pointer" }}>{lang === "th" ? "ดูทั้งหมด" : "Show all"}</button>
+        </div>
+        <p role="status" style={{ fontSize: 12, color: c.textMuted, marginTop: 8 }}>
+          {selectedDate ? (lang === "th" ? `ผู้เข้าพักวันที่ ${formatDate(selectedDate, lang)} (ไม่รวมวันเช็คเอาท์)` : `Guests staying on ${formatDate(selectedDate, lang)} (excluding check-out day)`) : (lang === "th" ? "แสดงรายการจองทั้งหมด" : "Showing all bookings")}
+        </p>
+      </div>
       <div className="flex gap-3">
-        <StatCard label={t.admin.totalBookings} value={t.admin.items(bookings.length)} />
+        <StatCard label={t.admin.totalBookings} value={t.admin.items(visibleBookings.length)} />
         <StatCard label={t.admin.totalRevenue} value={`฿${totalRevenue.toLocaleString()}`} />
       </div>
 
@@ -3794,12 +3813,12 @@ function AdminBookings({ lang }) {
       </button>
 
       {loading && <p style={{ fontSize: 14, color: c.textMuted, textAlign: "center", padding: "24px 0" }}>{t.admin.loading}</p>}
-      {!loading && bookings.length === 0 && (
-        <p style={{ fontSize: 14, color: c.textFaint, textAlign: "center", padding: "24px 0" }}>{t.admin.noBookings}</p>
+      {!loading && visibleBookings.length === 0 && (
+        <p style={{ fontSize: 14, color: c.textFaint, textAlign: "center", padding: "24px 0" }}>{selectedDate ? (lang === "th" ? "ไม่มีการจองในวันที่เลือก" : "No bookings for the selected date") : t.admin.noBookings}</p>
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {bookings.slice().reverse().map(b => (
+        {!loading && visibleBookings.slice().reverse().map(b => (
           <div key={b.id} style={{ background: c.white, borderRadius: "0.75rem", border: `1px solid ${c.paperBorder}`, padding: 12 }}>
             <div className="flex justify-between items-start">
               <div>
