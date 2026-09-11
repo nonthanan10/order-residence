@@ -180,3 +180,23 @@ export async function assignSelectedRoom(client, booking, number) {
   }
   throw new Error('Rooms changed; retry');
 }
+
+export async function verifyPaymentSlip(client, image, expected) {
+  if (!image || !Number.isFinite(expected.amount) || expected.amount < 0) return { error: 'invalid_input' };
+  const source = typeof image === 'string' && image.startsWith('data:image/')
+    ? { imageBase64: image } : typeof image === 'object' && image.imagePath ? { imagePath: image.imagePath } : null;
+  if (!source) return { error: 'no_image' };
+  try {
+    const { data, error } = await client.functions.invoke('verify-payment-slip', {
+      body: { ...source, expectedAmount: expected.amount, expectedName: expected.name },
+    });
+    if (error || !data || data.ok !== true) return { error: 'failed' };
+    const status = value => ['match', 'mismatch', 'unknown'].includes(value) ? value : 'unknown';
+    return {
+      ok: true, amount: typeof data.amount === 'number' && Number.isFinite(data.amount) ? data.amount : null,
+      date: typeof data.date === 'string' ? data.date : null,
+      recipientName: typeof data.recipientName === 'string' ? data.recipientName : null,
+      amountStatus: status(data.amountStatus), dateStatus: status(data.dateStatus), nameStatus: status(data.nameStatus),
+    };
+  } catch { return { error: 'failed' }; }
+}

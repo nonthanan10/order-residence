@@ -7,7 +7,7 @@ import {
   Upload, Paperclip, Phone, LayoutList, Wallet, Building2, Tv, MessageCircle, FileText, Printer, Scissors, Gift
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
-import { checkAvailability, confirmBooking, cancelBooking, completeCheckout, checkoutPaymentState, normalizedRoomStatus, canSelectRoom, assignSelectedRoom } from "./booking";
+import { checkAvailability, confirmBooking, cancelBooking, completeCheckout, checkoutPaymentState, normalizedRoomStatus, canSelectRoom, assignSelectedRoom, verifyPaymentSlip } from "./booking";
 
 /* ------------------------------------------------------------------
 DESIGN TOKENS
@@ -1210,49 +1210,8 @@ function dateFreshnessStatus(extractedDateStr) {
   return (parsed.day === now.getDate() && parsed.month === now.getMonth() + 1) ? "match" : "mismatch";
 }
 
-async function verifySlipWithAI(imageDataUrl, expected) {
-  const parsed = parseDataUrl(imageDataUrl);
-  if (!parsed) return { error: "no_image" };
-
-  const prompt = "This is a photo of a Thai bank transfer payment slip. Read it and respond with ONLY a raw JSON object, no markdown fences, no explanation, in exactly this shape: " +
-    '{"amount": <number or null>, "date": "<date text as shown on the slip, or null>", "recipientName": "<recipient account name as shown on the slip, or null>"}';
-
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 300,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: parsed.mediaType, data: parsed.base64 } },
-            { type: "text", text: prompt },
-          ],
-        }],
-      }),
-    });
-    const data = await response.json();
-    const rawText = (data.content || []).map(block => block.text || "").join("");
-    const cleaned = rawText.replace(/```json|```/g, "").trim();
-    const extracted = JSON.parse(cleaned);
-
-    const amountStatus = extracted.amount == null ? "unknown" : (Math.abs(Number(extracted.amount) - expected.amount) < 1 ? "match" : "mismatch");
-    const dateStatus = dateFreshnessStatus(extracted.date);
-    const nameStatus = fuzzyMatch(extracted.recipientName, expected.name);
-
-    return {
-      amount: extracted.amount,
-      date: extracted.date,
-      recipientName: extracted.recipientName,
-      amountStatus,
-      dateStatus,
-      nameStatus,
-    };
-  } catch (e) {
-    return { error: "failed" };
-  }
+async function verifySlipWithAI(image, expected) {
+  return verifyPaymentSlip(supabase, image, expected);
 }
 
 const STEP_FLOW = ["search", "results", "guest", "payment", "confirmed"];
@@ -1909,6 +1868,8 @@ function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
   const [verifying, setVerifying] = useState(false);
   const [slipCheck, setSlipCheck] = useState(null);
   const fileRef = useRef(null);
+  const verificationSeq = useRef(0);
+  useEffect(() => () => { verificationSeq.current += 1; }, []);
   const nights = calcNights(booking.checkInISO, booking.checkOutISO);
   const roomTotal = booking.room ? booking.room.price * nights : 0;
   const addonTotal = booking.extraBed ? ADDON_PRICE * nights : 0;
@@ -1918,9 +1879,11 @@ function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
   const grandTotal = total + tax;
 
   const runVerify = async (imageDataUrl) => {
+    const request = ++verificationSeq.current;
     setVerifying(true);
     setSlipCheck(null);
     const result = await verifySlipWithAI(imageDataUrl, { amount: grandTotal, name: HOTEL_ACCOUNT_NAME });
+    if (request !== verificationSeq.current) return;
     setSlipCheck(result);
     setVerifying(false);
   };
@@ -2030,7 +1993,7 @@ function PaymentScreen({ lang, booking, setBooking, settings, onNext }) {
             <img src={slip} alt="Payment slip" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: "0.75rem", border: `1px solid ${c.paperBorder}`, display: "block" }} />
             <button
               type="button"
-              onClick={() => { setSlip(null); setSlipCheck(null); }}
+              onClick={() => { verificationSeq.current += 1; setSlip(null); setSlipCheck(null); setVerifying(false); }}
               className="flex items-center justify-center"
               style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "9999px", background: c.white, border: "none", boxShadow: "0 1px 4px rgba(0,0,0,0.2)" }}
             >
@@ -2666,6 +2629,8 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
   const [verifying, setVerifying] = useState(false);
   const [slipCheck, setSlipCheck] = useState(null);
   const fileRef = useRef(null);
+  const verificationSeq = useRef(0);
+  useEffect(() => () => { verificationSeq.current += 1; }, []);
   const nights = calcNights(booking.checkInISO, booking.checkOutISO);
   const roomTotal = booking.room ? booking.room.price * nights : 0;
   const addonTotal = booking.extraBed ? ADDON_PRICE * nights : 0;
@@ -2683,9 +2648,11 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
   const paymentState = checkoutPaymentState(amountDue, !!slip, verifying);
 
   const runVerify = async (imageDataUrl) => {
+    const request = ++verificationSeq.current;
     setVerifying(true);
     setSlipCheck(null);
     const result = await verifySlipWithAI(imageDataUrl, { amount: amountDue, name: HOTEL_ACCOUNT_NAME });
+    if (request !== verificationSeq.current) return;
     setSlipCheck(result);
     setVerifying(false);
   };
@@ -2790,7 +2757,7 @@ function CheckoutScreen({ lang, booking, settings, onNext }) {
                 <img src={slip} alt="Payment slip" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: "0.75rem", border: `1px solid ${c.paperBorder}`, display: "block" }} />
                 <button
                   type="button"
-                  onClick={() => { setSlip(null); setSlipCheck(null); }}
+                  onClick={() => { verificationSeq.current += 1; setSlip(null); setSlipCheck(null); setVerifying(false); }}
                   className="flex items-center justify-center"
                   style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "9999px", background: c.white, border: "none", boxShadow: "0 1px 4px rgba(0,0,0,0.2)" }}
                 >
@@ -3799,6 +3766,24 @@ function WalkinBookingPanel({ lang, settings, onSaved }) {
   </form>;
 }
 
+function AdminSlipImage({ booking, lang }) {
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    let active = true;
+    setPreview(null);
+    if (!booking.slipPath) {
+      setPreview({ id: booking.id, url: booking.slipImage });
+    } else {
+      supabase.storage.from("private-docs").createSignedUrl(booking.slipPath, 600)
+        .then(({ data, error }) => { if (active) setPreview({ id: booking.id, url: error ? null : data?.signedUrl }); })
+        .catch(() => { if (active) setPreview({ id: booking.id, url: null }); });
+    }
+    return () => { active = false; };
+  }, [booking.id, booking.slipPath, booking.slipImage]);
+  if (!preview || preview.id !== booking.id) return <p>{lang === "th" ? "กำลังโหลดสลิป…" : "Loading slip…"}</p>;
+  return preview.url ? <img src={preview.url} alt="Payment slip" style={{ width: "100%", borderRadius: "0.75rem", display: "block" }} /> : <p role="alert">{lang === "th" ? "โหลดสลิปไม่สำเร็จ กรุณาปิดแล้วเปิดใหม่" : "Unable to load slip. Close and reopen."}</p>;
+}
+
 function AdminBookings({ lang, settings }) {
   const t = STRINGS[lang];
   const [bookings, setBookings] = useState([]);
@@ -3829,7 +3814,7 @@ function AdminBookings({ lang, settings }) {
 
   const checkSlip = async (bookingRecord) => {
     setCheckingSlipId(bookingRecord.id);
-    const result = await verifySlipWithAI(bookingRecord.slipImage, { amount: bookingRecord.amount || 0, name: HOTEL_ACCOUNT_NAME });
+    const result = await verifySlipWithAI(bookingRecord.slipPath ? { imagePath: bookingRecord.slipPath } : bookingRecord.slipImage, { amount: bookingRecord.amount || 0, name: HOTEL_ACCOUNT_NAME });
     const updatedList = bookings.map(b => b.id === bookingRecord.id ? { ...b, slipCheck: result } : b);
     setBookings(updatedList);
     setViewingSlip(prev => prev && prev.id === bookingRecord.id ? { ...prev, slipCheck: result } : prev);
@@ -3929,7 +3914,7 @@ function AdminBookings({ lang, settings }) {
             </div>
             <div className="flex items-center justify-between" style={{ marginTop: 8, fontSize: 11, color: c.textMuted }}>
               <span>{b.roomName} · {b.checkIn}–{b.checkOut}</span>
-              {b.slipAttached && b.slipImage ? (
+              {(b.slipImage || b.slipPath) ? (
                 <button
                   type="button"
                   onClick={() => setViewingSlip(b)}
@@ -3981,7 +3966,7 @@ function AdminBookings({ lang, settings }) {
                 <X size={14} style={{ color: c.ink }} />
               </button>
             </div>
-            <img src={viewingSlip.slipImage} alt="Payment slip" style={{ width: "100%", borderRadius: "0.75rem", display: "block" }} />
+            <AdminSlipImage booking={viewingSlip} lang={lang} />
 
             <div style={{ marginTop: 12 }}>
               <button
